@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>X Account Tracker v2.0</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      width: 450px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f7f9f9;
+    }
+    
+    .tabs {
+      display: flex;
+      background: white;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    
+    .tab {
+      flex: 1;
+      padding: 12px;
+      text-align: center;
+      background: none;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      color: #6b7280;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s ease;
+    }
+    
+    .tab.active {
+      color: #1d9bf0;
+      border-bottom-color: #1d9bf0;
+    }
+    
+    .tab-content {
+      display: none;
+      padding: 20px;
+    }
+    
+    .tab-content.active {
+      display: block;
+    }
+    
+    h1 {
+      font-size: 20px;
+      margin-bottom: 16px;
+      color: #0f1419;
+    }
+    
+    h2 {
+      font-size: 16px;
+      margin-bottom: 12px;
+      color: #0f1419;
+    }
+    
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    
+    .stat-card {
+      background: white;
+      padding: 12px;
+      border-radius: 10px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    
+    .stat-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: #1d9bf0;
+    }
+    
+    .stat-label {
+      font-size: 12px;
+      color: #536471;
+      margin-top: 4px;
+    }
+    
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    button {
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    .btn-primary {
+      background: #1d9bf0;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #1a8cd8;
+    }
+    
+    .btn-secondary {
+      background: white;
+      color: #0f1419;
+      border: 1px solid #cfd9de;
+    }
+    
+    .btn-secondary:hover {
+      background: #f7f9f9;
+    }
+    
+    .info-text {
+      font-size: 13px;
+      color: #536471;
+      line-height: 1.5;
+      margin-top: 16px;
+      padding: 12px;
+      background: white;
+      border-radius: 8px;
+      border-left: 3px solid #1d9bf0;
+    }
+    
+    #status {
+      text-align: center;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+    }
+    
+    #status.success {
+      background: #d1fae5;
+      color: #065f46;
+      display: block;
+    }
+    
+    #status.error {
+      background: #fee2e2;
+      color: #991b1b;
+      display: block;
+    }
+    
+    #aiStatus {
+      text-align: center;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+    }
+    
+    #aiStatus.success {
+      background: #d1fae5;
+      color: #065f46;
+      display: block;
+    }
+    
+    #aiStatus.error {
+      background: #fee2e2;
+      color: #991b1b;
+      display: block;
+    }
+    
+    /* AI Settings */
+    .setting-section {
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    
+    .setting-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    
+    .setting-row:last-child {
+      border-bottom: none;
+    }
+    
+    .setting-label {
+      flex: 1;
+    }
+    
+    .setting-label strong {
+      display: block;
+      font-size: 14px;
+      color: #0f1419;
+      margin-bottom: 4px;
+    }
+    
+    .setting-label span {
+      font-size: 12px;
+      color: #6b7280;
+    }
+    
+    .toggle-switch {
+      position: relative;
+      width: 44px;
+      height: 24px;
+    }
+    
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #d1d5db;
+      transition: 0.3s;
+      border-radius: 24px;
+    }
+    
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .toggle-slider {
+      background-color: #10b981;
+    }
+    
+    input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+    }
+    
+    .connection-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 16px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-top: 8px;
+    }
+    
+    .connection-status.connected {
+      background: #d1fae5;
+      color: #065f46;
+    }
+    
+    .connection-status.disconnected {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    
+    .form-group {
+      margin-bottom: 12px;
+    }
+    
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+    
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    
+    .btn-test {
+      background: #3b82f6;
+      color: white;
+      font-size: 13px;
+      padding: 8px 16px;
+    }
+    
+    .btn-test:hover {
+      background: #2563eb;
+    }
+  </style>
+</head>
+<body>
+  <div class="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="ai-settings">AI Settings</button>
+  </div>
+  
+  <!-- Overview Tab -->
+  <div class="tab-content active" id="overview">
+    <h1>X Account Tracker v2.0</h1>
+    
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="totalAccounts">0</div>
+        <div class="stat-label">Tracked Accounts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="recentlyUpdated">0</div>
+        <div class="stat-label">Updated Today</div>
+      </div>
+    </div>
+    
+    <div class="actions">
+      <button class="btn-primary" id="viewAccounts">View All Accounts</button>
+      <button class="btn-secondary" id="exportData">Export Data</button>
+      <button class="btn-secondary" id="importData">Import Data</button>
+    </div>
+    
+    <div id="status"></div>
+    
+    <div class="info-text">
+      💡 <strong>How to use:</strong> Visit X/Twitter and hover over any username to see the "+ Tag" button. AI will suggest sentiments if enabled!
+    </div>
+  </div>
+  
+  <!-- AI Settings Tab -->
+  <div class="tab-content" id="ai-settings">
+    <h1>AI Settings</h1>
+    
+    <div class="setting-section">
+      <h2>Ollama Connection</h2>
+      
+      <div class="form-group">
+        <label>Ollama URL</label>
+        <input type="text" id="ollamaUrl" value="http://localhost:11434" placeholder="http://localhost:11434">
+      </div>
+      
+      <div class="form-group">
+        <label>Model</label>
+        <select id="ollamaModel">
+          <option value="llama3.2:3b">Llama 3.2 (3B) - Fast</option>
+          <option value="llama3.1:8b">Llama 3.1 (8B) - Balanced</option>
+          <option value="mistral:7b">Mistral (7B) - Smart</option>
+        </select>
+      </div>
+      
+      <button class="btn-test" id="testConnection">Test Connection</button>
+      <div id="connectionStatus"></div>
+    </div>
+    
+    <div class="setting-section">
+      <h2>AI Features</h2>
+      
+      <div class="setting-row">
+        <div class="setting-label">
+          <strong>Enable AI Analysis</strong>
+          <span>Master switch for all AI features</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="aiEnabled">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      
+      <div class="setting-row">
+        <div class="setting-label">
+          <strong>Content Analysis</strong>
+          <span>Analyze post content for sentiment</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="contentAnalysis">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      
+      <div class="setting-row">
+        <div class="setting-label">
+          <strong>Pattern Recognition</strong>
+          <span>Learn from your interactions</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="patternRecognition">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      
+      <div class="setting-row">
+        <div class="setting-label">
+          <strong>Topic Extraction</strong>
+          <span>Auto-detect topics from posts</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="topicExtraction">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      
+      <div class="setting-row">
+        <div class="setting-label">
+          <strong>Auto-Suggest Tags</strong>
+          <span>Get AI suggestions when tagging</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="autoSuggest">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+    
+    <button class="btn-primary" id="saveAISettings">Save Settings</button>
+    <div id="aiStatus"></div>
+  </div>
+  
+  <input type="file" id="fileInput" accept=".json" style="display: none;">
+  
+  <script src="popup.js"></script>
+</body>
+</html>
