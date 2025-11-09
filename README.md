@@ -23,7 +23,7 @@ A browser extension that helps you track and organize your opinions about X (for
 
 ### Prerequisites
 
-- Chrome, Firefox, or any Chromium-based browser
+- Chrome, or any Chromium-based browser.  Firefox not working.
 - [Ollama](https://ollama.ai) installed locally (optional, for AI features)
 
 ### Installation
@@ -44,7 +44,7 @@ A browser extension that helps you track and organize your opinions about X (for
    - Click "Load unpacked"
    - Select the extension directory
 
-   **Firefox:**
+   **Firefox(currently not working):**
    - Navigate to `about:debugging#/runtime/this-firefox`
    - Click "Load Temporary Add-on"
    - Select `manifest.json` from the extension directory
