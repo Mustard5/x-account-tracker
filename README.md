@@ -128,7 +128,7 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 
 ## 📋 Requirements
 
-- **Browser**: Chrome 88+, Firefox 89+, or any Chromium-based browser with Manifest V3 support
+- **Browser**: Chrome 88+, or any Chromium-based browser with Manifest V3 support. Firefox NOT working.
 - **Ollama** (optional): Latest version for AI features
 - **Storage**: Minimal local storage for tracking database
 
