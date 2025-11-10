@@ -1,4 +1,4 @@
-// X Account Tracker v2.1 - AI-Enhanced Content Script (Service Worker Integration)
+// X Account Tracker v2.0 - AI-Enhanced Content Script (FIXED POSITIONING & CLICKS)
 
 const DB_NAME = 'XAccountTrackerDB';
 const DB_VERSION = 7;
@@ -16,8 +16,6 @@ let aiConfig = {
     autoSuggest: false
   }
 };
-
-// [All initDB, loadAIConfig, and database functions remain unchanged]
 
 // Initialize IndexedDB with AI interaction tracking
 async function initDB() {
@@ -40,23 +38,17 @@ async function initDB() {
         store.createIndex('lastUpdated', 'lastUpdated', { unique: false });
       }
       
-      // Interaction tracking for AI pattern recognition
+      // New: Interaction tracking for AI pattern recognition
       if (!db.objectStoreNames.contains('interactions')) {
-        const interactionStore = db.createObjectStore('interactions', { 
-          keyPath: 'id', 
-          autoIncrement: true 
-        });
+        const interactionStore = db.createObjectStore('interactions', { keyPath: 'id', autoIncrement: true });
         interactionStore.createIndex('username', 'username', { unique: false });
         interactionStore.createIndex('type', 'type', { unique: false });
         interactionStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
       
-      // AI analysis cache
+      // New: AI analysis cache
       if (!db.objectStoreNames.contains('aiAnalysis')) {
-        const aiStore = db.createObjectStore('aiAnalysis', { 
-          keyPath: 'id', 
-          autoIncrement: true 
-        });
+        const aiStore = db.createObjectStore('aiAnalysis', { keyPath: 'id', autoIncrement: true });
         aiStore.createIndex('username', 'username', { unique: false });
         aiStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
@@ -76,55 +68,71 @@ async function loadAIConfig() {
   });
 }
 
-// UPDATED: Test Ollama connection via service worker
+// Test Ollama connection
 async function testOllamaConnection() {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({
-      action: 'ollamaRequest',
-      type: 'tags',
-      data: { ollamaUrl: aiConfig.ollamaUrl }
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        resolve({ success: false, error: chrome.runtime.lastError.message });
-        return;
-      }
-      resolve(response);
-    });
-  });
+  try {
+    const response = await fetch(`${aiConfig.ollamaUrl}/api/tags`);
+    if (response.ok) {
+      const data = await response.json();
+      return { success: true, models: data.models };
+    }
+    return { success: false, error: 'Ollama not responding' };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 }
 
-// UPDATED: Call Ollama API via service worker
+// Call Ollama API for text analysis
 async function analyzeWithOllama(prompt, systemPrompt = '') {
   if (!aiConfig.enabled) return null;
-
-  const messages = [];
-  if (systemPrompt) {
-    messages.push({ role: 'system', content: systemPrompt });
-  }
-  messages.push({ role: 'user', content: prompt });
-
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({
-      action: 'ollamaRequest',
-      type: 'chat',
-      data: {
-        ollamaUrl: aiConfig.ollamaUrl,
+  
+  try {
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🤖 OLLAMA REQUEST');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('Model:', aiConfig.model);
+    console.log('URL:', aiConfig.ollamaUrl);
+    if (systemPrompt) {
+      console.log('System Prompt:', systemPrompt);
+    }
+    console.log('User Prompt:', prompt);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    const messages = [];
+    if (systemPrompt) {
+      messages.push({ role: 'system', content: systemPrompt });
+    }
+    messages.push({ role: 'user', content: prompt });
+    
+    const startTime = Date.now();
+    const response = await fetch(`${aiConfig.ollamaUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         model: aiConfig.model,
         messages: messages,
+        stream: false,
         options: {
           temperature: 0.3,
-          num_predict: 200
+          num_predict: 200  // Increased for more detailed responses
         }
-      }
-    }, (response) => {
-      if (chrome.runtime.lastError || !response.success) {
-        console.error('❌ Ollama analysis failed:', chrome.runtime.lastError?.message || response.error);
-        resolve(null);
-        return;
-      }
-      resolve(response.data.message.content);
+      })
     });
-  });
+    
+    if (!response.ok) throw new Error('Ollama request failed');
+    
+    const data = await response.json();
+    const elapsed = Date.now() - startTime;
+    
+    console.log('✅ OLLAMA RESPONSE (' + (elapsed/1000).toFixed(2) + 's)');
+    console.log('Raw Response:', data.message.content);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    
+    return data.message.content;
+  } catch (error) {
+    console.error('❌ Ollama analysis failed:', error);
+    return null;
+  }
 }
 
 // Extract post text from tweet elements
@@ -136,17 +144,22 @@ function extractPostText(tweetElement) {
 // Scrape recent posts from an account visible on page
 async function scrapeRecentPosts(username) {
   const posts = [];
+  
+  // Find all tweets on the page
   const articles = document.querySelectorAll('article');
   
   for (const article of articles) {
+    // Check if this tweet is from the target username
     const userElement = article.querySelector('[data-testid="User-Name"]');
     if (!userElement) continue;
     
     const articleUsername = extractUsername(userElement);
     if (articleUsername === username) {
       const postText = extractPostText(article);
-      if (postText && postText.length > 10) {
+      if (postText && postText.length > 10) { // Ignore very short posts
         posts.push(postText);
+        
+        // Limit to 5 most recent posts to keep analysis fast
         if (posts.length >= 5) break;
       }
     }
@@ -158,24 +171,23 @@ async function scrapeRecentPosts(username) {
 // Analyze post content for sentiment and topics
 async function analyzePostContent(username, posts) {
   if (!aiConfig.features.contentAnalysis || posts.length === 0) return null;
-
+  
   console.log(`X Account Tracker: Analyzing ${posts.length} posts from @${username}...`);
-
+  
+  // Limit total text to avoid overwhelming the model
   const recentPosts = posts.slice(0, 5).join('\n\n---\n\n');
   
-  const systemPrompt = `You are analyzing social media posts to help a user track whether they agree or disagree with accounts. Focus on SPECIFIC VIEWPOINTS and POSITIONS with concrete examples.
-
-Respond ONLY with JSON:
+  const systemPrompt = `You are analyzing social media posts to help a user track whether they agree or disagree with accounts. Focus on SPECIFIC VIEWPOINTS and POSITIONS with concrete examples. Respond ONLY with JSON:
 {
   "overallSentiment": "agree|disagree|mixed|expert|neutral",
   "topics": ["topic1", "topic2", "topic3"],
   "confidence": 0.0-1.0,
   "reasoning": "DETAILED: specific positions they take with examples from posts",
   "expertise": "specific subjects they show knowledge about",
-  "perspectives": "ideological stance with specific examples",
-  "keyQuotes": ["memorable quote 1", "quote 2"]
+  "perspectives": "ideological stance with specific examples (e.g., 'pro-market, skeptical of regulation - argues for free trade', 'progressive environmental views - advocates carbon tax')",
+  "keyQuotes": ["memorable/representative quote 1", "quote 2"]
 }`;
-
+  
   const prompt = `Analyze these recent posts from @${username}:
 
 ${recentPosts}
@@ -187,15 +199,15 @@ Provide SPECIFIC analysis:
 - Are they presenting facts, opinions, or advocacy? How?
 - What memorable quotes capture their stance?
 
-Be detailed and specific. Use examples from the posts. Don't be vague. Respond with JSON only.`;
-
-  const result = await analyzeWithOllama(prompt, systemPrompt);
+Be detailed and specific. Use examples from the posts. Don't be vague.
+Respond with JSON only.`;
   
+  const result = await analyzeWithOllama(prompt, systemPrompt);
   if (!result) {
     console.log(`X Account Tracker: Content analysis failed for @${username}`);
     return null;
   }
-
+  
   try {
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -206,47 +218,100 @@ Be detailed and specific. Use examples from the posts. Don't be vague. Respond w
   } catch (error) {
     console.error('Failed to parse AI content analysis:', error);
   }
+  
+  return null;
+}
 
+// Combine interaction patterns and content analysis
+async function getCombinedAISuggestion(username) {
+  let patternAnalysis = null;
+  let contentAnalysis = null;
+  
+  // Get interaction pattern analysis
+  if (aiConfig.features.patternRecognition) {
+    patternAnalysis = await analyzeInteractionPatterns(username);
+  }
+  
+  // Get content analysis if enabled
+  if (aiConfig.features.contentAnalysis) {
+    const posts = await scrapeRecentPosts(username);
+    if (posts.length > 0) {
+      contentAnalysis = await analyzePostContent(username, posts);
+    }
+  }
+  
+  // Combine both analyses
+  if (contentAnalysis && patternAnalysis) {
+    // Use content analysis but boost confidence with pattern agreement
+    const patternsAgree = contentAnalysis.overallSentiment === patternAnalysis.suggestedSentiment;
+    
+    return {
+      suggestedSentiment: contentAnalysis.overallSentiment,
+      confidence: patternsAgree ? 
+        Math.min(0.95, contentAnalysis.confidence * 1.2) : // Boost if both agree
+        (contentAnalysis.confidence + patternAnalysis.confidence) / 2, // Average if different
+      reasoning: `Content shows: ${contentAnalysis.reasoning}. Your interactions ${patternsAgree ? 'confirm' : 'show'} ${patternAnalysis.suggestedSentiment} sentiment.`,
+      topics: contentAnalysis.topics,
+      expertise: contentAnalysis.expertise,
+      concerns: contentAnalysis.concerns,
+      sources: ['content', 'patterns']
+    };
+  } else if (contentAnalysis) {
+    // Only content analysis available
+    return {
+      suggestedSentiment: contentAnalysis.overallSentiment,
+      confidence: contentAnalysis.confidence,
+      reasoning: contentAnalysis.reasoning,
+      topics: contentAnalysis.topics,
+      expertise: contentAnalysis.expertise,
+      concerns: contentAnalysis.concerns,
+      sources: ['content']
+    };
+  } else if (patternAnalysis) {
+    // Only pattern analysis available
+    return {
+      ...patternAnalysis,
+      sources: ['patterns']
+    };
+  }
+  
   return null;
 }
 
 // Analyze user's interaction patterns with an account
 async function analyzeInteractionPatterns(username) {
   if (!aiConfig.features.patternRecognition) return null;
-
-  const interactions = await getInteractions(username);
   
+  const interactions = await getInteractions(username);
   if (interactions.length < 3) {
     console.log(`X Account Tracker: Not enough data for @${username} (${interactions.length} interactions, need 3+)`);
     return null;
   }
-
+  
   console.log(`X Account Tracker: Analyzing ${interactions.length} interactions with @${username}...`);
-
-  const interactionSummary = interactions
-    .map(i => `${i.type} on ${new Date(i.timestamp).toLocaleDateString()}`)
-    .join(', ');
-
-  const systemPrompt = `You are a pattern analyzer. Based on user interactions, suggest sentiment.
-
-Respond ONLY with JSON:
+  
+  const interactionSummary = interactions.map(i => 
+    `${i.type} on ${new Date(i.timestamp).toLocaleDateString()}`
+  ).join(', ');
+  
+  const systemPrompt = `You are a pattern analyzer. Based on user interactions, suggest sentiment. Respond ONLY with JSON:
 {
   "suggestedSentiment": "agree|disagree|mixed|expert|biased|neutral",
   "confidence": 0.0-1.0,
   "reasoning": "brief explanation"
 }`;
-
-  const prompt = `User's interactions with @${username}: ${interactionSummary}
+  
+  const prompt = `User's interactions with @${username}:
+${interactionSummary}
 
 What sentiment does this suggest? Respond with JSON only.`;
-
-  const result = await analyzeWithOllama(prompt, systemPrompt);
   
+  const result = await analyzeWithOllama(prompt, systemPrompt);
   if (!result) {
     console.log(`X Account Tracker: AI analysis failed for @${username}`);
     return null;
   }
-
+  
   try {
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -257,69 +322,14 @@ What sentiment does this suggest? Respond with JSON only.`;
   } catch (error) {
     console.error('Failed to parse AI response:', error);
   }
-
-  return null;
-}
-
-// Combine interaction patterns and content analysis
-async function getCombinedAISuggestion(username) {
-  let patternAnalysis = null;
-  let contentAnalysis = null;
-
-  // Get interaction pattern analysis
-  if (aiConfig.features.patternRecognition) {
-    patternAnalysis = await analyzeInteractionPatterns(username);
-  }
-
-  // Get content analysis if enabled
-  if (aiConfig.features.contentAnalysis) {
-    const posts = await scrapeRecentPosts(username);
-    if (posts.length > 0) {
-      contentAnalysis = await analyzePostContent(username, posts);
-    }
-  }
-
-  // Combine both analyses
-  if (contentAnalysis && patternAnalysis) {
-    const patternsAgree = contentAnalysis.overallSentiment === patternAnalysis.suggestedSentiment;
-    
-    return {
-      suggestedSentiment: contentAnalysis.overallSentiment,
-      confidence: patternsAgree 
-        ? Math.min(0.95, contentAnalysis.confidence * 1.2)
-        : (contentAnalysis.confidence + patternAnalysis.confidence) / 2,
-      reasoning: `Content shows: ${contentAnalysis.reasoning}. Your interactions ${patternsAgree ? 'confirm' : 'show'} ${patternAnalysis.suggestedSentiment} sentiment.`,
-      topics: contentAnalysis.topics,
-      expertise: contentAnalysis.expertise,
-      perspectives: contentAnalysis.perspectives,
-      keyQuotes: contentAnalysis.keyQuotes,
-      sources: ['content', 'patterns']
-    };
-  } else if (contentAnalysis) {
-    return {
-      suggestedSentiment: contentAnalysis.overallSentiment,
-      confidence: contentAnalysis.confidence,
-      reasoning: contentAnalysis.reasoning,
-      topics: contentAnalysis.topics,
-      expertise: contentAnalysis.expertise,
-      perspectives: contentAnalysis.perspectives,
-      keyQuotes: contentAnalysis.keyQuotes,
-      sources: ['content']
-    };
-  } else if (patternAnalysis) {
-    return {
-      ...patternAnalysis,
-      sources: ['patterns']
-    };
-  }
-
+  
   return null;
 }
 
 // Track user interactions for pattern recognition
 async function recordInteraction(username, type) {
   if (!aiConfig.features.patternRecognition) return;
-
+  
   const transaction = db.transaction(['interactions'], 'readwrite');
   const store = transaction.objectStore('interactions');
   
@@ -328,7 +338,7 @@ async function recordInteraction(username, type) {
     type: type,
     timestamp: new Date().toISOString()
   });
-
+  
   console.log(`X Account Tracker: Recorded ${type} interaction with @${username}`);
 }
 
@@ -400,8 +410,8 @@ async function deleteAccount(username) {
 // Extract username from various X/Twitter elements
 function extractUsername(element) {
   const usernameElement = element.querySelector('[data-testid="User-Name"] a[href^="/"]') ||
-                          element.querySelector('a[role="link"][href^="/"]') ||
-                          element.closest('article')?.querySelector('a[href^="/"]');
+                         element.querySelector('a[role="link"][href^="/"]') ||
+                         element.closest('article')?.querySelector('a[href^="/"]');
   
   if (usernameElement) {
     const href = usernameElement.getAttribute('href');
@@ -423,7 +433,7 @@ function createBadge(sentiment, topics, aiSuggested = false) {
   const icon = getSentimentIcon(sentiment);
   const color = getSentimentColor(sentiment);
   
-  let badgeHTML = `<span class="xat-badge-icon" style="color: ${color}">${icon}</span>`;
+  let badgeHTML = `<span class="xat-badge-icon" style="background-color: ${color}">${icon}</span>`;
   
   if (aiSuggested) {
     badgeHTML += '<span class="xat-ai-indicator" title="AI Suggested">🤖</span>';
@@ -464,291 +474,561 @@ function getSentimentColor(sentiment) {
   return colors[sentiment] || '#6b7280';
 }
 
-// Create tagging menu with AI suggestions
+// Create tagging menu with AI suggestions - FIXED VERSION
 function createTaggingMenu(username, existingData, aiSuggestion = null) {
   const menu = document.createElement('div');
   menu.className = 'xat-menu';
   
+  // CRITICAL: Stop all event propagation on the menu itself
   menu.addEventListener('click', (e) => {
     e.stopPropagation();
   });
   
   let aiSuggestionHTML = '';
-  
   if (aiSuggestion && aiConfig.features.autoSuggest) {
     const confidencePercent = Math.round(aiSuggestion.confidence * 100);
-    const confidenceColor = confidencePercent >= 75 ? '#10b981' : 
-                           confidencePercent >= 50 ? '#f59e0b' : '#ef4444';
+    const confidenceColor = confidencePercent >= 75 ? '#10b981' : confidencePercent >= 50 ? '#f59e0b' : '#ef4444';
     
+    // Build source description
     const sources = aiSuggestion.sources || ['patterns'];
-    const sourceText = sources.includes('content') && sources.includes('patterns')
-      ? 'post content and your interactions'
-      : sources.includes('content')
-      ? 'post content analysis'
-      : 'your interaction history';
+    const sourceText = sources.includes('content') && sources.includes('patterns') ? 
+      'post content and your interactions' :
+      sources.includes('content') ? 'post content analysis' : 'your interaction history';
     
+    // Build detailed info with better formatting
     let detailedInfo = '';
-    
     if (aiSuggestion.topics && aiSuggestion.topics.length > 0) {
-      detailedInfo += `<div class="xat-ai-detail"><strong>Topics:</strong> ${aiSuggestion.topics.join(', ')}</div>`;
+      detailedInfo += `<div style="font-size: 12px; margin-top: 12px; padding: 8px; background: rgba(0,0,0,0.05); border-radius: 6px;"><strong>📋 Topics:</strong> ${aiSuggestion.topics.join(', ')}</div>`;
     }
-    
     if (aiSuggestion.expertise) {
-      detailedInfo += `<div class="xat-ai-detail"><strong>Expertise:</strong> ${aiSuggestion.expertise}</div>`;
+      detailedInfo += `<div style="font-size: 12px; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.05); border-radius: 6px;"><strong>🎓 Expertise:</strong> ${aiSuggestion.expertise}</div>`;
     }
-    
     if (aiSuggestion.perspectives) {
-      detailedInfo += `<div class="xat-ai-detail"><strong>Perspectives:</strong> ${aiSuggestion.perspectives}</div>`;
+      detailedInfo += `<div style="font-size: 12px; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.05); border-radius: 6px;"><strong>💭 Viewpoint:</strong> ${aiSuggestion.perspectives}</div>`;
     }
-    
     if (aiSuggestion.keyQuotes && aiSuggestion.keyQuotes.length > 0) {
-      detailedInfo += `<div class="xat-ai-detail"><strong>Key Quotes:</strong><ul>`;
-      aiSuggestion.keyQuotes.forEach(quote => {
-        detailedInfo += `<li>"${quote}"</li>`;
-      });
-      detailedInfo += `</ul></div>`;
+      detailedInfo += `<div style="font-size: 12px; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.05); border-radius: 6px;"><strong>💬 Key Quotes:</strong><br>${aiSuggestion.keyQuotes.map(q => `"${q}"`).join('<br>')}</div>`;
     }
     
     aiSuggestionHTML = `
       <div class="xat-ai-suggestion">
-        <div class="xat-ai-header">
-          <span class="xat-ai-icon">🤖</span>
-          <span class="xat-ai-title">AI Suggestion</span>
-          <span class="xat-ai-confidence" style="background-color: ${confidenceColor}">${confidencePercent}%</span>
+        <div class="xat-ai-suggestion-header">
+          <span>🤖 AI Analysis Complete</span>
+          <span class="xat-ai-confidence" style="background: ${confidenceColor}">${confidencePercent}% confident</span>
         </div>
-        <div class="xat-ai-content">
-          <div class="xat-ai-sentiment">
-            Suggested: <strong>${aiSuggestion.suggestedSentiment}</strong>
-          </div>
-          <div class="xat-ai-source">Based on ${sourceText}</div>
+        <div class="xat-ai-suggestion-body">
+          <strong>Suggested Sentiment: ${aiSuggestion.suggestedSentiment}</strong>
+          <p><em>Why:</em> ${aiSuggestion.reasoning}</p>
           ${detailedInfo}
-          <div class="xat-ai-reasoning">${aiSuggestion.reasoning}</div>
+          <div style="font-size: 11px; color: #6b7280; margin-top: 8px;">
+            Based on ${sourceText}
+          </div>
+          <button class="xat-ai-accept">✓ Accept This Suggestion</button>
         </div>
       </div>
     `;
-  } else if (aiConfig.enabled && aiConfig.features.autoSuggest) {
+  } else if (aiConfig.features.autoSuggest && !aiSuggestion) {
     aiSuggestionHTML = `
-      <div class="xat-ai-suggestion xat-ai-loading">
-        <div class="xat-ai-header">
-          <span class="xat-ai-icon">🤖</span>
-          <span class="xat-ai-title">AI Analysis</span>
-        </div>
-        <div class="xat-ai-content">
-          Not enough interaction history yet. Tag this account and interact with their posts to enable AI suggestions.
+      <div class="xat-ai-suggestion" style="background: #f3f4f6; border-color: #d1d5db;">
+        <div class="xat-ai-suggestion-body">
+          <p style="margin: 0; color: #6b7280; font-size: 13px;">
+            💡 <strong>AI Analysis:</strong> Not enough interaction history yet. Tag this account and interact with their posts to enable AI suggestions in the future.
+          </p>
         </div>
       </div>
     `;
   }
   
-  const currentSentiment = existingData?.sentiment || 'neutral';
-  const currentNotes = existingData?.notes || '';
-  
   menu.innerHTML = `
     <div class="xat-menu-header">
-      <span>Tag @${username}</span>
-      <button class="xat-close-btn">×</button>
+      <strong>@${username}</strong>
+      <button class="xat-menu-close">×</button>
     </div>
-    
-    ${aiSuggestionHTML}
-    
-    <div class="xat-menu-section">
-      <label>Sentiment:</label>
-      <div class="xat-sentiment-buttons">
-        <button class="xat-sentiment-btn" data-sentiment="agree" ${currentSentiment === 'agree' ? 'data-selected="true"' : ''}>
-          <span class="xat-sentiment-icon">✓</span> Agree
-        </button>
-        <button class="xat-sentiment-btn" data-sentiment="disagree" ${currentSentiment === 'disagree' ? 'data-selected="true"' : ''}>
-          <span class="xat-sentiment-icon">✗</span> Disagree
-        </button>
-        <button class="xat-sentiment-btn" data-sentiment="mixed" ${currentSentiment === 'mixed' ? 'data-selected="true"' : ''}>
-          <span class="xat-sentiment-icon">~</span> Mixed
-        </button>
-        <button class="xat-sentiment-btn" data-sentiment="expert" ${currentSentiment === 'expert' ? 'data-selected="true"' : ''}>
-          <span class="xat-sentiment-icon">★</span> Expert
-        </button>
-        <button class="xat-sentiment-btn" data-sentiment="biased" ${currentSentiment === 'biased' ? 'data-selected="true"' : ''}>
-          <span class="xat-sentiment-icon">⚠</span> Biased
-        </button>
-        <button class="xat-sentiment-btn" data-sentiment="neutral" ${currentSentiment === 'neutral' ? 'data-selected="true"' : ''}>
-          <span class="xat-sentiment-icon">•</span> Neutral
-        </button>
+    <div class="xat-menu-body">
+      ${aiSuggestionHTML}
+      <div class="xat-menu-section">
+        <label>Overall Sentiment:</label>
+        <div class="xat-sentiment-buttons">
+          <button class="xat-sentiment-btn" data-sentiment="agree">✓ Agree</button>
+          <button class="xat-sentiment-btn" data-sentiment="disagree">✗ Disagree</button>
+          <button class="xat-sentiment-btn" data-sentiment="mixed">~ Mixed</button>
+          <button class="xat-sentiment-btn" data-sentiment="expert">★ Expert</button>
+          <button class="xat-sentiment-btn" data-sentiment="biased">⚠ Biased</button>
+          <button class="xat-sentiment-btn" data-sentiment="neutral">• Neutral</button>
+        </div>
       </div>
-    </div>
-    
-    <div class="xat-menu-section">
-      <label>Notes:</label>
-      <textarea class="xat-notes-input" placeholder="Add notes about this account...">${currentNotes}</textarea>
-    </div>
-    
-    <div class="xat-menu-actions">
-      <button class="xat-save-btn">Save</button>
-      ${existingData ? '<button class="xat-delete-btn">Delete</button>' : ''}
+      <div class="xat-menu-section">
+        <label>Topic-Specific Tags:</label>
+        <div class="xat-topics">
+          <input type="text" class="xat-topic-input" placeholder="e.g., politics, tech, crypto">
+          <select class="xat-topic-sentiment">
+            <option value="agree">Agree</option>
+            <option value="disagree">Disagree</option>
+            <option value="expert">Expert</option>
+          </select>
+          <button class="xat-topic-add">Add</button>
+        </div>
+        <div class="xat-topic-list"></div>
+      </div>
+      <div class="xat-menu-section">
+        <label>Notes:</label>
+        <textarea class="xat-notes" placeholder="Personal notes about this account...">${existingData?.notes || ''}</textarea>
+      </div>
+      <div class="xat-menu-actions">
+        <button class="xat-save-btn">Save</button>
+        ${existingData ? '<button class="xat-delete-btn">Delete</button>' : ''}
+      </div>
     </div>
   `;
   
-  // Event listeners
-  const closeBtn = menu.querySelector('.xat-close-btn');
-  closeBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    menu.remove();
-  });
+  // Highlight current sentiment
+  if (existingData?.sentiment) {
+    const btn = menu.querySelector(`[data-sentiment="${existingData.sentiment}"]`);
+    if (btn) btn.classList.add('active');
+  } else if (aiSuggestion) {
+    const btn = menu.querySelector(`[data-sentiment="${aiSuggestion.suggestedSentiment}"]`);
+    if (btn) btn.classList.add('active', 'ai-suggested');
+  }
   
-  const sentimentBtns = menu.querySelectorAll('.xat-sentiment-btn');
-  sentimentBtns.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      sentimentBtns.forEach(b => b.removeAttribute('data-selected'));
-      btn.setAttribute('data-selected', 'true');
-    });
-  });
-  
-  const saveBtn = menu.querySelector('.xat-save-btn');
-  saveBtn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    
-    const selectedBtn = menu.querySelector('.xat-sentiment-btn[data-selected="true"]');
-    const sentiment = selectedBtn?.getAttribute('data-sentiment') || 'neutral';
-    const notes = menu.querySelector('.xat-notes-input').value;
-    
-    const accountData = {
-      sentiment: sentiment,
-      notes: notes,
-      aiSuggested: aiSuggestion ? true : false,
-      aiAnalysis: aiSuggestion || null
-    };
-    
-    await saveAccount(username, accountData);
-    await recordInteraction(username, 'tagged');
-    
-    menu.remove();
-    updateBadges();
-  });
-  
-  const deleteBtn = menu.querySelector('.xat-delete-btn');
-  if (deleteBtn) {
-    deleteBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      
-      if (confirm(`Remove tag for @${username}?`)) {
-        await deleteAccount(username);
-        menu.remove();
-        updateBadges();
-      }
-    });
+  // Render existing topics
+  if (existingData?.topics) {
+    renderTopics(menu, existingData.topics);
   }
   
   return menu;
 }
 
-// Add badges to user profile elements
-async function addBadges() {
+// Render topics in menu
+function renderTopics(menu, topics) {
+  const topicList = menu.querySelector('.xat-topic-list');
+  topicList.innerHTML = '';
+  
+  for (const [topic, sentiment] of Object.entries(topics)) {
+    const topicTag = document.createElement('div');
+    topicTag.className = 'xat-topic-tag';
+    topicTag.innerHTML = `
+      <span class="xat-topic-name">${topic}</span>
+      <span class="xat-topic-sentiment" data-sentiment="${sentiment}">${getSentimentIcon(sentiment)}</span>
+      <button class="xat-topic-remove" data-topic="${topic}">×</button>
+    `;
+    topicList.appendChild(topicTag);
+  }
+}
+
+// Process username elements on the page with AI analysis
+async function processUsernames() {
   const userElements = document.querySelectorAll('[data-testid="User-Name"]');
   
-  for (const userElement of userElements) {
-    if (userElement.querySelector('.xat-badge')) continue;
+  for (const element of userElements) {
+    if (element.hasAttribute('data-xat-processed')) continue;
     
-    const username = extractUsername(userElement);
+    const username = extractUsername(element);
     if (!username) continue;
+    
+    element.setAttribute('data-xat-processed', 'true');
     
     const accountData = await getAccount(username);
-    if (!accountData) continue;
     
-    const badge = createBadge(
-      accountData.sentiment,
-      accountData.topics,
-      accountData.aiSuggested
-    );
-    
-    const container = userElement.querySelector('[dir="ltr"]') || userElement;
-    container.appendChild(badge);
-  }
-}
-
-// Add tagging buttons
-async function addTagButtons() {
-  const userElements = document.querySelectorAll('[data-testid="User-Name"]');
-  
-  for (const userElement of userElements) {
-    if (userElement.querySelector('.xat-tag-btn')) continue;
-    
-    const username = extractUsername(userElement);
-    if (!username) continue;
-    
-    const tagBtn = document.createElement('button');
-    tagBtn.className = 'xat-tag-btn';
-    tagBtn.textContent = '+ Tag';
-    
-    tagBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      e.preventDefault();
+    if (accountData) {
+      const badge = createBadge(accountData.sentiment, accountData.topics, accountData.aiSuggested);
+      badge.setAttribute('data-username', username);
       
-      document.querySelectorAll('.xat-menu').forEach(m => m.remove());
-      
-      const existingData = await getAccount(username);
-      let aiSuggestion = null;
-      
-      if (aiConfig.enabled && (aiConfig.features.contentAnalysis || aiConfig.features.patternRecognition)) {
-        aiSuggestion = await getCombinedAISuggestion(username);
+      // Add tooltip showing AI status
+      if (accountData.aiSuggested && accountData.aiAnalysis) {
+        badge.title = `AI Suggested: ${accountData.sentiment} (${Math.round(accountData.aiAnalysis.confidence * 100)}% confident)\n${accountData.aiAnalysis.reasoning}`;
+      } else {
+        badge.title = `Sentiment: ${accountData.sentiment}\nClick to edit`;
       }
       
-      const menu = createTaggingMenu(username, existingData, aiSuggestion);
+      // IMPROVED: Place badge after the entire User-Name container, not inside it
+      // This avoids conflict with X's hover profile card
+      if (!element.querySelector('.xat-badge')) {
+        element.style.position = 'relative';
+        element.appendChild(badge);
+      }
       
-      const rect = tagBtn.getBoundingClientRect();
-      menu.style.position = 'fixed';
-      menu.style.top = `${rect.bottom + 5}px`;
-      menu.style.left = `${rect.left}px`;
-      menu.style.zIndex = '10000';
-      
-      document.body.appendChild(menu);
+      badge.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showTaggingMenu(username, accountData, badge);
+      });
+    }
+    
+    // Add hover listener
+    element.addEventListener('mouseenter', () => {
+      if (!element.querySelector('.xat-quick-tag')) {
+        const quickTag = document.createElement('button');
+        quickTag.className = 'xat-quick-tag';
+        quickTag.textContent = '+ Tag';
+        quickTag.addEventListener('click', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          
+          let aiSuggestion = null;
+          if (aiConfig.features.autoSuggest && !accountData) {
+            // Show AI working indicator
+            const analysisTypes = [];
+            if (aiConfig.features.contentAnalysis) analysisTypes.push('posts');
+            if (aiConfig.features.patternRecognition) analysisTypes.push('interactions');
+            
+            const analysisText = analysisTypes.length > 0 ? 
+              `Analyzing ${analysisTypes.join(' & ')}...` : 
+              'Analyzing...';
+            
+            quickTag.innerHTML = `🤖 <span style="font-size: 10px;">${analysisText}</span>`;
+            quickTag.style.width = 'auto';
+            quickTag.style.minWidth = '180px';
+            
+            const startTime = Date.now();
+            aiSuggestion = await getCombinedAISuggestion(username);
+            const elapsed = Date.now() - startTime;
+            
+            if (aiSuggestion) {
+              quickTag.innerHTML = `✓ <span style="font-size: 10px;">Ready (${(elapsed/1000).toFixed(1)}s)</span>`;
+              setTimeout(() => {
+                quickTag.textContent = '+ Tag';
+                quickTag.style.width = '';
+                quickTag.style.minWidth = '';
+              }, 1000);
+            } else {
+              quickTag.textContent = '+ Tag';
+              quickTag.style.width = '';
+              quickTag.style.minWidth = '';
+            }
+          }
+          
+          showTaggingMenu(username, accountData, quickTag, aiSuggestion);
+        });
+        element.appendChild(quickTag);
+      }
     });
     
-    const container = userElement.querySelector('[dir="ltr"]') || userElement;
-    container.appendChild(tagBtn);
+    element.addEventListener('mouseleave', () => {
+      const quickTag = element.querySelector('.xat-quick-tag');
+      if (quickTag) quickTag.remove();
+    });
   }
 }
 
-// Update all badges
-async function updateBadges() {
-  document.querySelectorAll('.xat-badge').forEach(b => b.remove());
-  document.querySelectorAll('.xat-tag-btn').forEach(b => b.remove());
+// Show tagging menu - FIXED POSITIONING
+function showTaggingMenu(username, existingData, anchorElement, aiSuggestion = null) {
+  const existingMenu = document.querySelector('.xat-menu');
+  if (existingMenu) existingMenu.remove();
   
-  await addBadges();
-  await addTagButtons();
+  const menu = createTaggingMenu(username, existingData, aiSuggestion);
+  document.body.appendChild(menu);
+  
+  // FIXED: Better positioning calculation
+  const rect = anchorElement.getBoundingClientRect();
+  const scrollY = window.scrollY || window.pageYOffset;
+  const scrollX = window.scrollX || window.pageXOffset;
+  
+  // Position menu to the right of the anchor, accounting for scroll
+  let top = rect.bottom + scrollY + 10;
+  let left = rect.left + scrollX;
+  
+  // Apply initial position
+  menu.style.position = 'absolute';
+  menu.style.top = `${top}px`;
+  menu.style.left = `${left}px`;
+  menu.style.zIndex = '999999';
+  
+  // Wait for menu to render, then adjust if needed
+  setTimeout(() => {
+    const menuRect = menu.getBoundingClientRect();
+    
+    // If menu goes off right edge, move it left
+    if (menuRect.right > window.innerWidth) {
+      left = window.innerWidth - menuRect.width - 20 + scrollX;
+      menu.style.left = `${left}px`;
+    }
+    
+    // If menu goes off bottom edge, position above anchor instead
+    if (menuRect.bottom > window.innerHeight) {
+      top = rect.top + scrollY - menuRect.height - 10;
+      menu.style.top = `${top}px`;
+    }
+    
+    // If menu goes off top edge, position at top of viewport
+    if (top < scrollY) {
+      top = scrollY + 10;
+      menu.style.top = `${top}px`;
+    }
+  }, 0);
+  
+  setupMenuListeners(menu, username, existingData, aiSuggestion);
 }
+
+// Setup menu event listeners with AI acceptance - FIXED CLICK HANDLING
+function setupMenuListeners(menu, username, existingData, aiSuggestion) {
+  let selectedSentiment = existingData?.sentiment || aiSuggestion?.suggestedSentiment || 'neutral';
+  let topics = existingData?.topics ? {...existingData.topics} : {};
+  let aiAccepted = false;
+  
+  // AI Accept button
+  const acceptAIBtn = menu.querySelector('.xat-ai-accept');
+  if (acceptAIBtn && aiSuggestion) {
+    acceptAIBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectedSentiment = aiSuggestion.suggestedSentiment;
+      menu.querySelectorAll('.xat-sentiment-btn').forEach(b => b.classList.remove('active'));
+      const btn = menu.querySelector(`[data-sentiment="${selectedSentiment}"]`);
+      if (btn) btn.classList.add('active');
+      aiAccepted = true;
+      
+      menu.querySelector('.xat-ai-suggestion').style.background = '#d1fae5';
+      acceptAIBtn.textContent = '✓ Accepted';
+      acceptAIBtn.disabled = true;
+    });
+  }
+  
+  // Sentiment buttons with visual feedback
+  menu.querySelectorAll('.xat-sentiment-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      
+      // Visual feedback - button press animation
+      btn.style.transform = 'scale(0.95)';
+      btn.style.transition = 'transform 0.1s ease';
+      setTimeout(() => {
+        btn.style.transform = 'scale(1)';
+      }, 100);
+      
+      // Update selection
+      menu.querySelectorAll('.xat-sentiment-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedSentiment = btn.getAttribute('data-sentiment');
+      
+      console.log(`✓ Sentiment selected: ${selectedSentiment}`);
+    });
+  });
+  
+  // Add topic with feedback
+  const addTopicBtn = menu.querySelector('.xat-topic-add');
+  addTopicBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const topicInput = menu.querySelector('.xat-topic-input');
+    const sentimentSelect = menu.querySelector('.xat-topic-sentiment');
+    const topic = topicInput.value.trim();
+    
+    if (topic) {
+      // Visual feedback
+      addTopicBtn.style.background = '#10b981';
+      addTopicBtn.textContent = '✓';
+      
+      topics[topic] = sentimentSelect.value;
+      renderTopics(menu, topics);
+      topicInput.value = '';
+      
+      console.log(`✓ Topic added: ${topic} (${sentimentSelect.value})`);
+      
+      setTimeout(() => {
+        addTopicBtn.style.background = '';
+        addTopicBtn.textContent = 'Add';
+      }, 500);
+    }
+  });
+  
+  // Remove topic - use event delegation
+  menu.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (e.target.classList.contains('xat-topic-remove')) {
+      const topic = e.target.getAttribute('data-topic');
+      delete topics[topic];
+      renderTopics(menu, topics);
+    }
+  });
+  
+  // Save button with feedback
+  const saveBtn = menu.querySelector('.xat-save-btn');
+  saveBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const notes = menu.querySelector('.xat-notes').value;
+    
+    // Visual feedback - saving
+    saveBtn.textContent = 'Saving...';
+    saveBtn.disabled = true;
+    saveBtn.style.opacity = '0.7';
+    
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('💾 SAVING ACCOUNT DATA');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('Username:', username);
+    console.log('Sentiment:', selectedSentiment);
+    console.log('Topics:', Object.keys(topics).length > 0 ? topics : 'None');
+    console.log('Notes:', notes ? notes.substring(0, 50) + '...' : 'None');
+    console.log('AI Suggested:', aiAccepted ? 'Yes' : 'No');
+    if (aiSuggestion) {
+      console.log('AI Confidence:', Math.round(aiSuggestion.confidence * 100) + '%');
+      console.log('AI Reasoning:', aiSuggestion.reasoning);
+    }
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    
+    await saveAccount(username, {
+      sentiment: selectedSentiment,
+      topics: topics,
+      notes: notes,
+      interactionCount: existingData?.interactionCount || 0,
+      aiSuggested: aiAccepted,
+      aiAnalysis: aiSuggestion
+    });
+    
+    // Success feedback
+    saveBtn.textContent = '✓ Saved!';
+    saveBtn.style.background = '#10b981';
+    
+    console.log('✅ Account data saved successfully for @' + username + '\n');
+    
+    setTimeout(() => {
+      menu.remove();
+    }, 500);
+    
+    // Force refresh of badges
+    document.querySelectorAll('[data-xat-processed]').forEach(el => {
+      el.removeAttribute('data-xat-processed');
+    });
+    processUsernames();
+  });
+  
+  // Delete button
+  const deleteBtn = menu.querySelector('.xat-delete-btn');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (confirm(`Delete tracking data for @${username}?`)) {
+        await deleteAccount(username);
+        menu.remove();
+        document.querySelectorAll(`[data-username="${username}"]`).forEach(badge => badge.remove());
+      }
+    });
+  }
+  
+  // Close button
+  const closeBtn = menu.querySelector('.xat-menu-close');
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.remove();
+  });
+  
+  // Close on outside click
+  setTimeout(() => {
+    const closeOnOutsideClick = (e) => {
+      if (!menu.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener('click', closeOnOutsideClick);
+      }
+    };
+    document.addEventListener('click', closeOnOutsideClick);
+  }, 100);
+}
+
+// Track interactions with posts
+function observeInteractions() {
+  if (!aiConfig.features.patternRecognition) return;
+  
+  document.addEventListener('click', async (e) => {
+    const target = e.target.closest('[data-testid="like"], [data-testid="retweet"], [data-testid="unretweet"]');
+    if (target) {
+      const article = target.closest('article');
+      if (article) {
+        const usernameElement = article.querySelector('[data-testid="User-Name"]');
+        if (usernameElement) {
+          const username = extractUsername(usernameElement);
+          if (username) {
+            const interactionType = target.getAttribute('data-testid');
+            await recordInteraction(username, interactionType);
+          }
+        }
+      }
+    }
+  }, true);
+}
+
+// Initialize extension
+(async function init() {
+  console.log('X Account Tracker v2.0: Initializing...');
+  
+  try {
+    await initDB();
+    await loadAIConfig();
+    console.log('X Account Tracker v2.0: Database ready');
+    console.log('AI Features:', aiConfig.enabled ? 'Enabled' : 'Disabled');
+    
+    if (aiConfig.enabled) {
+      const connectionTest = await testOllamaConnection();
+      if (connectionTest.success) {
+        console.log('X Account Tracker v2.0: ✓ Connected to Ollama');
+        console.log('Available models:', connectionTest.models.map(m => m.name).join(', '));
+      } else {
+        console.warn('X Account Tracker v2.0: ⚠ Cannot connect to Ollama:', connectionTest.error);
+      }
+    }
+    
+    await processUsernames();
+    
+    const observer = new MutationObserver(() => {
+      processUsernames();
+    });
+    
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+    
+    observeInteractions();
+    
+    console.log('X Account Tracker v2.0: Active and monitoring');
+  } catch (error) {
+    console.error('X Account Tracker v2.0: Initialization error', error);
+  }
+})();
 
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getAllAccounts') {
     getAllAccounts().then(accounts => {
-      sendResponse({ accounts: accounts });
+      sendResponse({ accounts });
     });
     return true;
   }
   
-  if (request.action === 'updateBadges') {
-    updateBadges();
+  if (request.action === 'exportData') {
+    getAllAccounts().then(accounts => {
+      sendResponse({ data: accounts });
+    });
+    return true;
+  }
+  
+  if (request.action === 'importData') {
+    const transaction = db.transaction(['accounts'], 'readwrite');
+    const store = transaction.objectStore('accounts');
+    
+    request.data.forEach(account => {
+      store.put(account);
+    });
+    
     sendResponse({ success: true });
+  }
+  
+  if (request.action === 'testOllama') {
+    testOllamaConnection().then(result => {
+      sendResponse(result);
+    });
+    return true;
+  }
+  
+  if (request.action === 'updateAIConfig') {
+    aiConfig = { ...aiConfig, ...request.config };
+    chrome.storage.local.set({ aiConfig }, () => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+  
+  if (request.action === 'reloadAIConfig') {
+    loadAIConfig().then(() => {
+      sendResponse({ success: true, config: aiConfig });
+    });
     return true;
   }
 });
-
-// Initialize
-(async function init() {
-  console.log('X Account Tracker: Initializing...');
-  
-  await initDB();
-  await loadAIConfig();
-  
-  await updateBadges();
-  
-  const observer = new MutationObserver(() => {
-    updateBadges();
-  });
-  
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
-  
-  console.log('X Account Tracker: Ready!');
-})();

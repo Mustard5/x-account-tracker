@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X Account Tracker - AI Enhanced",
-  "version": "2.1.0",
+  "version": "2.0.0",
   "description": "Track opinions about X accounts with AI-powered sentiment analysis via local Ollama",
   "permissions": [
     "storage",
@@ -12,9 +12,6 @@
     "https://x.com/*",
     "http://localhost:11434/*"
   ],
-  "background": {
-    "service_worker": "service-worker.js"
-  },
   "content_scripts": [
     {
       "matches": [
@@ -40,3 +37,4 @@
     "128": "icon128.png"
   }
 }
+
