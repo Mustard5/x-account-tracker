@@ -1,6 +1,3 @@
-Below is a new README for your extension, with clear guidance for integrating and configuring the Ollama server—especially focusing on adding the necessary CORS environment variables for Linux using systemd, and clarifying that successful operation is currently confirmed only on PopOS! with Brave. All instructions and limitations are explained in direct context for contributors and users.
-
-***
 
 # X Account Tracker – AI Enhanced
 
