@@ -37,44 +37,6 @@ function showStatus(message, type, elementId = 'status') {
   }, 3000);
 }
 
-// Load overview stats - FIXED VERSION
-async function loadStats() {
-  chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
-    // Check if we have a valid tab
-    if (!tabs || tabs.length === 0 || !tabs[0] || !tabs[0].url) {
-      document.getElementById('totalAccounts').textContent = '-';
-      document.getElementById('recentlyUpdated').textContent = '-';
-      return;
-    }
-    
-    // Check if on Twitter/X
-    if (tabs[0].url.includes('twitter.com') || tabs[0].url.includes('x.com')) {
-      chrome.tabs.sendMessage(tabs[0].id, {action: 'getAllAccounts'}, (response) => {
-        if (chrome.runtime.lastError) {
-          console.warn('Could not connect to content script:', chrome.runtime.lastError);
-          document.getElementById('totalAccounts').textContent = '-';
-          document.getElementById('recentlyUpdated').textContent = '-';
-          return;
-        }
-        
-        if (response && response.accounts) {
-          const accounts = response.accounts;
-          document.getElementById('totalAccounts').textContent = accounts.length;
-          
-          const today = new Date().toDateString();
-          const recentCount = accounts.filter(acc => 
-            new Date(acc.lastUpdated).toDateString() === today
-          ).length;
-          document.getElementById('recentlyUpdated').textContent = recentCount;
-        }
-      });
-    } else {
-      document.getElementById('totalAccounts').textContent = '-';
-      document.getElementById('recentlyUpdated').textContent = '-';
-    }
-  });
-}
-
 // Load AI settings from storage
 async function loadAISettings() {
   chrome.storage.local.get(['aiConfig'], (result) => {
@@ -306,9 +268,18 @@ if (fileInput) {
                   showStatus('Could not import data. Reload the page and try again.', 'error');
                   return;
                 }
-                
-                showStatus('Data imported successfully!', 'success');
-                loadStats();
+
+                if (response.success) {
+                  if (response.errors && response.errors.length > 0) {
+                    showStatus(`Imported ${response.imported} accounts with ${response.errors.length} errors. Check console.`, 'success');
+                    console.warn('Import errors:', response.errors);
+                  } else {
+                    showStatus(`Data imported successfully! ${response.imported} accounts added.`, 'success');
+                  }
+                  loadStats();
+                } else {
+                  showStatus(`Import failed: ${response.error}`, 'error');
+                }
               });
             } else {
               showStatus('Please visit X/Twitter to import data', 'error');

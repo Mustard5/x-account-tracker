@@ -49,42 +49,67 @@ To let your local extension communicate with the Ollama API (which is necessary 
 
 **For Linux (PopOS!) with Ollama installed as a systemd service:**
 
-1. **Create or Edit the Service Override:**
+1. **Find Your Extension ID (Important for Security):**
+   - Go to `chrome://extensions` (or `brave://extensions`)
+   - Find "X Account Tracker - AI Enhanced"
+   - Copy the extension ID (looks like: `abcdefghijklmnopqrstuvwxyz123456`)
+
+2. **Create or Edit the Service Override:**
    ```bash
    sudo systemctl edit ollama
    ```
-2. **Add CORS Allow Environment Variable**
-   Insert the following:
+
+3. **Add CORS Allow Environment Variable (Secure Method)**
+
+   **RECOMMENDED - Specific Origins (Most Secure):**
+   ```
+   [Service]
+   Environment="OLLAMA_ORIGINS=chrome-extension://YOUR_EXTENSION_ID_HERE,https://x.com"
+   ```
+   Replace `YOUR_EXTENSION_ID_HERE` with your actual extension ID from step 1.
+
+   **ALTERNATIVE - Localhost Only (Less Secure):**
+   ```
+   [Service]
+   Environment="OLLAMA_ORIGINS=http://localhost:*,https://x.com"
+   ```
+
+   **NOT RECOMMENDED - Wildcard (Least Secure):**
    ```
    [Service]
    Environment="OLLAMA_ORIGINS=*"
    ```
-   Save (exit editor).
-   
-3. **Reload and Restart Ollama:**
+   ⚠️ Using wildcard `*` allows ANY website to access your local Ollama server. Only use this for testing, never in production.
+
+   Save and exit the editor.
+
+4. **Reload and Restart Ollama:**
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl restart ollama
    ```
 
-4. **Verify the Configuration:**
+5. **Verify the Configuration:**
    - Check the override file:
-     ```
+     ```bash
      cat /etc/systemd/system/ollama.service.d/override.conf
      ```
-     You should see the `[Service] Environment="OLLAMA_ORIGINS=*"` line.
+     You should see the `[Service] Environment="OLLAMA_ORIGINS=..."` line with your specific origins.
    - Restart Ollama and check log output:
-     ```
+     ```bash
      sudo journalctl -u ollama -n 20 --no-pager
      ```
      Look for mention of `OLLAMA_ORIGINS` to confirm it was picked up.
 
-5. **Test CORS Header (Should Return `Access-Control-Allow-Origin: *`):**
+6. **Test CORS Header:**
    ```bash
    curl -H "Origin: https://x.com" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: Content-Type" -X OPTIONS http://localhost:11434/api/tags -v
    ```
+   Should return `Access-Control-Allow-Origin` header matching your configured origin.
 
    If the header is missing, double-check the steps above or consult systemd documentation. If still unresolved, you may need to edit the main service file directly and add the Environment line under `[Service]` before restarting.
+
+**Security Note:** Always use the most restrictive CORS policy possible. Specifying exact origins prevents unauthorized websites from accessing your local AI server.
 
 ## Usage
 
@@ -103,7 +128,11 @@ To let your local extension communicate with the Ollama API (which is necessary 
 ## Security & Privacy
 
 - All data is stored locally—no tracking, analytics, or account registration.
+- All user inputs are sanitized to prevent XSS attacks and code injection.
+- Input validation ensures only safe data is stored in the local database.
 - You must configure Ollama server security if making it accessible on your LAN or beyond localhost. By default, this extension assumes **localhost-only** for maximum safety.
+- CORS configuration should use specific origins (not wildcards) to prevent unauthorized access to your local AI server.
+- Imported data is validated and sanitized before being added to your database.
 
 ## Disclaimer
 

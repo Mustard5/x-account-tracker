@@ -17,6 +17,105 @@ let aiConfig = {
   }
 };
 
+// Post scraping cache (username -> {posts, timestamp})
+const postsCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Input Validation Functions
+const VALID_SENTIMENTS = ['agree', 'disagree', 'mixed', 'expert', 'neutral', 'biased'];
+const MAX_USERNAME_LENGTH = 15; // Twitter username max length
+const MAX_TOPIC_LENGTH = 50;
+const MAX_NOTES_LENGTH = 1000;
+
+function sanitizeUsername(username) {
+  if (typeof username !== 'string') return null;
+  // Twitter usernames: alphanumeric and underscore only, 1-15 chars
+  const sanitized = username.replace(/[^a-zA-Z0-9_]/g, '').substring(0, MAX_USERNAME_LENGTH);
+  return sanitized.length > 0 ? sanitized : null;
+}
+
+function validateSentiment(sentiment) {
+  return VALID_SENTIMENTS.includes(sentiment);
+}
+
+function sanitizeTopic(topic) {
+  if (typeof topic !== 'string') return null;
+  // Remove any HTML/script tags and trim
+  const sanitized = topic.replace(/<[^>]*>/g, '').trim().substring(0, MAX_TOPIC_LENGTH);
+  return sanitized.length > 0 ? sanitized : null;
+}
+
+function sanitizeNotes(notes) {
+  if (typeof notes !== 'string') return '';
+  // Remove any HTML/script tags and trim
+  return notes.replace(/<[^>]*>/g, '').trim().substring(0, MAX_NOTES_LENGTH);
+}
+
+function validateTopics(topics) {
+  if (typeof topics !== 'object' || topics === null || Array.isArray(topics)) {
+    return {};
+  }
+
+  const validTopics = {};
+  for (const [topic, sentiment] of Object.entries(topics)) {
+    const sanitizedTopic = sanitizeTopic(topic);
+    if (sanitizedTopic && validateSentiment(sentiment)) {
+      validTopics[sanitizedTopic] = sentiment;
+    }
+  }
+  return validTopics;
+}
+
+function validateAccountData(data) {
+  if (typeof data !== 'object' || data === null) {
+    throw new Error('Invalid account data: must be an object');
+  }
+
+  if (!data.username) {
+    throw new Error('Invalid account data: missing username');
+  }
+
+  const sanitizedUsername = sanitizeUsername(data.username);
+  if (!sanitizedUsername) {
+    throw new Error(`Invalid username: ${data.username}`);
+  }
+
+  if (!validateSentiment(data.sentiment)) {
+    throw new Error(`Invalid sentiment: ${data.sentiment}`);
+  }
+
+  return {
+    username: sanitizedUsername,
+    sentiment: data.sentiment,
+    topics: validateTopics(data.topics || {}),
+    notes: sanitizeNotes(data.notes || ''),
+    lastUpdated: data.lastUpdated || new Date().toISOString(),
+    interactionCount: typeof data.interactionCount === 'number' ? data.interactionCount : 0,
+    aiSuggested: Boolean(data.aiSuggested),
+    aiAnalysis: data.aiAnalysis || null
+  };
+}
+
+function validateImportData(data) {
+  if (!Array.isArray(data)) {
+    throw new Error('Import data must be an array');
+  }
+
+  const validatedAccounts = [];
+  const errors = [];
+
+  for (let i = 0; i < data.length; i++) {
+    try {
+      const validated = validateAccountData(data[i]);
+      validatedAccounts.push(validated);
+    } catch (error) {
+      errors.push(`Account ${i + 1}: ${error.message}`);
+    }
+  }
+
+  return { accounts: validatedAccounts, errors };
+}
+
 // Initialize IndexedDB with AI interaction tracking
 async function initDB() {
   return new Promise((resolve, reject) => {
@@ -144,31 +243,55 @@ function extractPostText(tweetElement) {
   return textElement ? textElement.textContent.trim() : '';
 }
 
-// Scrape recent posts from an account visible on page
+// Scrape recent posts from an account visible on page (with caching)
 async function scrapeRecentPosts(username) {
-  const posts = [];
-  
-  // Find all tweets on the page
-  const articles = document.querySelectorAll('article');
-  
-  for (const article of articles) {
-    // Check if this tweet is from the target username
-    const userElement = article.querySelector('[data-testid="User-Name"]');
-    if (!userElement) continue;
-    
-    const articleUsername = extractUsername(userElement);
-    if (articleUsername === username) {
-      const postText = extractPostText(article);
-      if (postText && postText.length > 10) { // Ignore very short posts
-        posts.push(postText);
-        
-        // Limit to 5 most recent posts to keep analysis fast
-        if (posts.length >= 5) break;
+  try {
+    // Check cache first
+    const cached = postsCache.get(username);
+    const now = Date.now();
+
+    if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+      console.log(`Using cached posts for @${username} (age: ${Math.round((now - cached.timestamp) / 1000)}s)`);
+      return cached.posts;
+    }
+
+    // Cache miss or expired - scrape fresh posts
+    const posts = [];
+
+    // Find all tweets on the page
+    const articles = document.querySelectorAll('article');
+
+    for (const article of articles) {
+      // Check if this tweet is from the target username
+      const userElement = article.querySelector('[data-testid="User-Name"]');
+      if (!userElement) continue;
+
+      const articleUsername = extractUsername(userElement);
+      if (articleUsername === username) {
+        const postText = extractPostText(article);
+        if (postText && postText.length > 10) { // Ignore very short posts
+          posts.push(postText);
+
+          // Limit to 5 most recent posts to keep analysis fast
+          if (posts.length >= 5) break;
+        }
       }
     }
+
+    // Update cache
+    if (posts.length > 0) {
+      postsCache.set(username, {
+        posts,
+        timestamp: now
+      });
+      console.log(`Cached ${posts.length} posts for @${username}`);
+    }
+
+    return posts;
+  } catch (error) {
+    console.error(`Failed to scrape posts for @${username}:`, error);
+    return []; // Return empty array on error
   }
-  
-  return posts;
 }
 
 // Analyze post content for sentiment and topics
@@ -227,54 +350,75 @@ Respond with JSON only.`;
 
 // Get user interactions from DB
 async function getUserInteractions(username) {
-  return new Promise((resolve) => {
-    const transaction = db.transaction(['interactions'], 'readonly');
-    const store = transaction.objectStore('interactions');
-    const index = store.index('username');
-    const request = index.getAll(username);
-    
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => resolve([]);
+  return new Promise((resolve, reject) => {
+    try {
+      const transaction = db.transaction(['interactions'], 'readonly');
+      const store = transaction.objectStore('interactions');
+      const index = store.index('username');
+      const request = index.getAll(username);
+
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => {
+        console.error(`Error retrieving interactions for @${username}:`, request.error);
+        reject(request.error);
+      };
+    } catch (error) {
+      console.error(`Exception in getUserInteractions for @${username}:`, error);
+      reject(error);
+    }
   });
 }
 
 // Analyze interaction patterns
 async function analyzeInteractionPatterns(username) {
   if (!aiConfig.features.patternRecognition) return null;
-  
-  const interactions = await getUserInteractions(username);
-  if (interactions.length < 3) return null; // Need some history
-  
-  const likesCount = interactions.filter(i => i.type === 'like').length;
-  const retweetsCount = interactions.filter(i => i.type === 'retweet').length;
-  const totalInteractions = interactions.length;
-  
-  // Simple pattern: if you mostly like/retweet, you probably agree
-  if (likesCount + retweetsCount > totalInteractions * 0.6) {
-    return {
-      suggestedSentiment: 'agree',
-      confidence: 0.7,
-      reasoning: `You've interacted positively with this account ${likesCount + retweetsCount} times out of ${totalInteractions} interactions`
-    };
+
+  try {
+    const interactions = await getUserInteractions(username);
+    if (interactions.length < 3) return null; // Need some history
+
+    const likesCount = interactions.filter(i => i.type === 'like').length;
+    const retweetsCount = interactions.filter(i => i.type === 'retweet').length;
+    const totalInteractions = interactions.length;
+
+    // Simple pattern: if you mostly like/retweet, you probably agree
+    if (likesCount + retweetsCount > totalInteractions * 0.6) {
+      return {
+        suggestedSentiment: 'agree',
+        confidence: 0.7,
+        reasoning: `You've interacted positively with this account ${likesCount + retweetsCount} times out of ${totalInteractions} interactions`
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error(`Failed to analyze interaction patterns for @${username}:`, error);
+    return null;
   }
-  
-  return null;
 }
 
 // Record an interaction
 async function recordInteraction(username, interactionType) {
-  return new Promise((resolve) => {
-    const transaction = db.transaction(['interactions'], 'readwrite');
-    const store = transaction.objectStore('interactions');
-    
-    store.add({
-      username,
-      type: interactionType,
-      timestamp: new Date().toISOString()
-    });
-    
-    transaction.oncomplete = () => resolve(true);
-    transaction.onerror = () => resolve(false);
+  return new Promise((resolve, reject) => {
+    try {
+      const transaction = db.transaction(['interactions'], 'readwrite');
+      const store = transaction.objectStore('interactions');
+
+      store.add({
+        username,
+        type: interactionType,
+        timestamp: new Date().toISOString()
+      });
+
+      transaction.oncomplete = () => resolve(true);
+      transaction.onerror = () => {
+        console.error(`Error recording interaction for @${username}:`, transaction.error);
+        reject(transaction.error);
+      };
+    } catch (error) {
+      console.error(`Exception in recordInteraction for @${username}:`, error);
+      reject(error);
+    }
   });
 }
 
@@ -348,52 +492,81 @@ async function getCombinedAISuggestion(username) {
 
 // Database operations
 async function saveAccount(username, data) {
-  return new Promise((resolve) => {
-    const transaction = db.transaction(['accounts'], 'readwrite');
-    const store = transaction.objectStore('accounts');
-    
-    const accountData = {
-      username,
-      ...data,
-      lastUpdated: new Date().toISOString()
-    };
-    
-    store.put(accountData);
-    transaction.oncomplete = () => resolve(true);
-    transaction.onerror = () => resolve(false);
+  return new Promise((resolve, reject) => {
+    try {
+      // Validate and sanitize all input data
+      const validatedData = validateAccountData({
+        username,
+        ...data
+      });
+
+      const transaction = db.transaction(['accounts'], 'readwrite');
+      const store = transaction.objectStore('accounts');
+
+      store.put(validatedData);
+      transaction.oncomplete = () => resolve(true);
+      transaction.onerror = () => reject(transaction.error);
+    } catch (error) {
+      console.error('Validation error in saveAccount:', error);
+      reject(error);
+    }
   });
 }
 
 async function getAccount(username) {
-  return new Promise((resolve) => {
-    const transaction = db.transaction(['accounts'], 'readonly');
-    const store = transaction.objectStore('accounts');
-    const request = store.get(username);
-    
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
+  return new Promise((resolve, reject) => {
+    try {
+      const transaction = db.transaction(['accounts'], 'readonly');
+      const store = transaction.objectStore('accounts');
+      const request = store.get(username);
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        console.error(`Error retrieving account @${username}:`, request.error);
+        reject(request.error);
+      };
+    } catch (error) {
+      console.error(`Exception in getAccount for @${username}:`, error);
+      reject(error);
+    }
   });
 }
 
 async function deleteAccount(username) {
-  return new Promise((resolve) => {
-    const transaction = db.transaction(['accounts'], 'readwrite');
-    const store = transaction.objectStore('accounts');
-    store.delete(username);
-    
-    transaction.oncomplete = () => resolve(true);
-    transaction.onerror = () => resolve(false);
+  return new Promise((resolve, reject) => {
+    try {
+      const transaction = db.transaction(['accounts'], 'readwrite');
+      const store = transaction.objectStore('accounts');
+      store.delete(username);
+
+      transaction.oncomplete = () => resolve(true);
+      transaction.onerror = () => {
+        console.error(`Error deleting account @${username}:`, transaction.error);
+        reject(transaction.error);
+      };
+    } catch (error) {
+      console.error(`Exception in deleteAccount for @${username}:`, error);
+      reject(error);
+    }
   });
 }
 
 async function getAllAccounts() {
-  return new Promise((resolve) => {
-    const transaction = db.transaction(['accounts'], 'readonly');
-    const store = transaction.objectStore('accounts');
-    const request = store.getAll();
-    
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => resolve([]);
+  return new Promise((resolve, reject) => {
+    try {
+      const transaction = db.transaction(['accounts'], 'readonly');
+      const store = transaction.objectStore('accounts');
+      const request = store.getAll();
+
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => {
+        console.error('Error retrieving all accounts:', request.error);
+        reject(request.error);
+      };
+    } catch (error) {
+      console.error('Exception in getAllAccounts:', error);
+      reject(error);
+    }
   });
 }
 
@@ -401,10 +574,19 @@ async function getAllAccounts() {
 function extractUsername(element) {
   const link = element.querySelector('a[href^="/"]');
   if (!link) return null;
-  
+
   const href = link.getAttribute('href');
   const match = href.match(/^\/([^/?]+)/);
-  return match ? match[1] : null;
+  if (!match) return null;
+
+  // Sanitize and validate username
+  const username = sanitizeUsername(match[1]);
+  // Skip invalid usernames and system paths
+  if (!username || username === 'i' || username === 'home' || username === 'explore') {
+    return null;
+  }
+
+  return username;
 }
 
 // Create badge element
@@ -453,13 +635,24 @@ function createTaggingMenu(username, existingData = null, aiSuggestion = null) {
   // Header
   const header = document.createElement('div');
   header.className = 'xat-menu-header';
-  header.innerHTML = `
-    <div>
-      <strong>Tag @${username}</strong>
-      ${existingData ? '<span class="xat-edit-badge">Editing</span>' : '<span class="xat-new-badge">New</span>'}
-    </div>
-    <button class="xat-menu-close">×</button>
-  `;
+
+  const headerDiv = document.createElement('div');
+  const strong = document.createElement('strong');
+  strong.textContent = `Tag @${username}`;
+  headerDiv.appendChild(strong);
+  headerDiv.appendChild(document.createTextNode(' '));
+
+  const badge = document.createElement('span');
+  badge.className = existingData ? 'xat-edit-badge' : 'xat-new-badge';
+  badge.textContent = existingData ? 'Editing' : 'New';
+  headerDiv.appendChild(badge);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'xat-menu-close';
+  closeBtn.textContent = '×';
+
+  header.appendChild(headerDiv);
+  header.appendChild(closeBtn);
   
   // Body
   const body = document.createElement('div');
@@ -469,24 +662,55 @@ function createTaggingMenu(username, existingData = null, aiSuggestion = null) {
   if (aiSuggestion && aiConfig.features.autoSuggest) {
     const aiSection = document.createElement('div');
     aiSection.className = 'xat-ai-suggestion';
-    
+
     const confidencePercent = Math.round(aiSuggestion.confidence * 100);
     const confidenceColor = aiSuggestion.confidence > 0.7 ? '#10b981' : aiSuggestion.confidence > 0.5 ? '#f59e0b' : '#ef4444';
-    
-    aiSection.innerHTML = `
-      <div class="xat-ai-header">
-        <span>🤖 AI Suggestion</span>
-        <span class="xat-ai-confidence" style="color: ${confidenceColor}; font-weight: 700;">
-          ${confidencePercent}% confident
-        </span>
-      </div>
-      <div class="xat-ai-sentiment">
-        Suggested: <strong>${aiSuggestion.suggestedSentiment}</strong>
-      </div>
-      ${aiSuggestion.reasoning ? `<div class="xat-ai-reasoning">${aiSuggestion.reasoning}</div>` : ''}
-      ${aiSuggestion.topics ? `<div class="xat-ai-topics">Topics: ${aiSuggestion.topics.join(', ')}</div>` : ''}
-      <button class="xat-ai-accept">Accept AI Suggestion</button>
-    `;
+
+    // AI Header
+    const aiHeader = document.createElement('div');
+    aiHeader.className = 'xat-ai-header';
+    const aiHeaderSpan = document.createElement('span');
+    aiHeaderSpan.textContent = '🤖 AI Suggestion';
+    const aiConfidence = document.createElement('span');
+    aiConfidence.className = 'xat-ai-confidence';
+    aiConfidence.style.color = confidenceColor;
+    aiConfidence.style.fontWeight = '700';
+    aiConfidence.textContent = `${confidencePercent}% confident`;
+    aiHeader.appendChild(aiHeaderSpan);
+    aiHeader.appendChild(aiConfidence);
+    aiSection.appendChild(aiHeader);
+
+    // AI Sentiment
+    const aiSentimentDiv = document.createElement('div');
+    aiSentimentDiv.className = 'xat-ai-sentiment';
+    aiSentimentDiv.textContent = 'Suggested: ';
+    const sentimentStrong = document.createElement('strong');
+    sentimentStrong.textContent = aiSuggestion.suggestedSentiment;
+    aiSentimentDiv.appendChild(sentimentStrong);
+    aiSection.appendChild(aiSentimentDiv);
+
+    // AI Reasoning (sanitized)
+    if (aiSuggestion.reasoning) {
+      const reasoningDiv = document.createElement('div');
+      reasoningDiv.className = 'xat-ai-reasoning';
+      reasoningDiv.textContent = aiSuggestion.reasoning;
+      aiSection.appendChild(reasoningDiv);
+    }
+
+    // AI Topics (sanitized)
+    if (aiSuggestion.topics && aiSuggestion.topics.length > 0) {
+      const topicsDiv = document.createElement('div');
+      topicsDiv.className = 'xat-ai-topics';
+      topicsDiv.textContent = `Topics: ${aiSuggestion.topics.join(', ')}`;
+      aiSection.appendChild(topicsDiv);
+    }
+
+    // Accept Button
+    const acceptBtn = document.createElement('button');
+    acceptBtn.className = 'xat-ai-accept';
+    acceptBtn.textContent = 'Accept AI Suggestion';
+    aiSection.appendChild(acceptBtn);
+
     body.appendChild(aiSection);
   }
   
@@ -536,10 +760,14 @@ function createTaggingMenu(username, existingData = null, aiSuggestion = null) {
   // Notes section
   const notesSection = document.createElement('div');
   notesSection.className = 'xat-notes-section';
-  notesSection.innerHTML = `
-    <h3>Notes</h3>
-    <textarea class="xat-notes" placeholder="Add notes...">${existingData?.notes || ''}</textarea>
-  `;
+  const notesHeader = document.createElement('h3');
+  notesHeader.textContent = 'Notes';
+  const notesTextarea = document.createElement('textarea');
+  notesTextarea.className = 'xat-notes';
+  notesTextarea.placeholder = 'Add notes...';
+  notesTextarea.value = existingData?.notes || '';
+  notesSection.appendChild(notesHeader);
+  notesSection.appendChild(notesTextarea);
   body.appendChild(notesSection);
   
   // Buttons
@@ -561,14 +789,21 @@ function createTaggingMenu(username, existingData = null, aiSuggestion = null) {
 function renderTopics(menu, topics) {
   const topicsList = menu.querySelector('.xat-topics-list');
   topicsList.innerHTML = '';
-  
+
   Object.entries(topics).forEach(([topic, sentiment]) => {
     const topicTag = document.createElement('div');
     topicTag.className = `xat-topic-tag xat-topic-${sentiment}`;
-    topicTag.innerHTML = `
-      <span>${topic}</span>
-      <button class="xat-topic-remove" data-topic="${topic}">×</button>
-    `;
+
+    const topicSpan = document.createElement('span');
+    topicSpan.textContent = topic;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'xat-topic-remove';
+    removeBtn.setAttribute('data-topic', topic);
+    removeBtn.textContent = '×';
+
+    topicTag.appendChild(topicSpan);
+    topicTag.appendChild(removeBtn);
     topicsList.appendChild(topicTag);
   });
 }
@@ -576,15 +811,21 @@ function renderTopics(menu, topics) {
 // Process all usernames on the page
 async function processUsernames() {
   const userElements = document.querySelectorAll('[data-testid="User-Name"]');
-  
+
   for (const element of userElements) {
     if (element.hasAttribute('data-xat-processed')) continue;
     element.setAttribute('data-xat-processed', 'true');
-    
+
     const username = extractUsername(element);
     if (!username || username === 'i') continue; // Skip invalid usernames
-    
-    const accountData = await getAccount(username);
+
+    let accountData = null;
+    try {
+      accountData = await getAccount(username);
+    } catch (error) {
+      console.error(`Failed to get account data for @${username}:`, error);
+      continue; // Skip this username and move to next
+    }
     
     if (accountData) {
       const badge = createBadge(accountData.sentiment, accountData.topics, accountData.aiSuggested);
@@ -781,18 +1022,32 @@ function setupMenuListeners(menu, username, existingData, aiSuggestion) {
     const topicInput = menu.querySelector('.xat-topic-input');
     const sentimentSelect = menu.querySelector('.xat-topic-sentiment');
     const topic = topicInput.value.trim();
-    
+
     if (topic) {
+      // Validate and sanitize topic
+      const sanitizedTopic = sanitizeTopic(topic);
+
+      if (!sanitizedTopic) {
+        // Show error feedback
+        addTopicBtn.style.background = '#ef4444';
+        addTopicBtn.textContent = '✗';
+        setTimeout(() => {
+          addTopicBtn.style.background = '';
+          addTopicBtn.textContent = 'Add';
+        }, 500);
+        return;
+      }
+
       // Visual feedback
       addTopicBtn.style.background = '#10b981';
       addTopicBtn.textContent = '✓';
-      
-      topics[topic] = sentimentSelect.value;
+
+      topics[sanitizedTopic] = sentimentSelect.value;
       renderTopics(menu, topics);
       topicInput.value = '';
-      
-      console.log(`✓ Topic added: ${topic} (${sentimentSelect.value})`);
-      
+
+      console.log(`✓ Topic added: ${sanitizedTopic} (${sentimentSelect.value})`);
+
       setTimeout(() => {
         addTopicBtn.style.background = '';
         addTopicBtn.textContent = 'Add';
@@ -815,12 +1070,12 @@ function setupMenuListeners(menu, username, existingData, aiSuggestion) {
   saveBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const notes = menu.querySelector('.xat-notes').value;
-    
+
     // Visual feedback - saving
     saveBtn.textContent = 'Saving...';
     saveBtn.disabled = true;
     saveBtn.style.opacity = '0.7';
-    
+
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('💾 SAVING ACCOUNT DATA');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -834,31 +1089,46 @@ function setupMenuListeners(menu, username, existingData, aiSuggestion) {
       console.log('AI Reasoning:', aiSuggestion.reasoning);
     }
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    
-    await saveAccount(username, {
-      sentiment: selectedSentiment,
-      topics: topics,
-      notes: notes,
-      interactionCount: existingData?.interactionCount || 0,
-      aiSuggested: aiAccepted,
-      aiAnalysis: aiSuggestion
-    });
-    
-    // Success feedback
-    saveBtn.textContent = '✓ Saved!';
-    saveBtn.style.background = '#10b981';
-    
-    console.log('✅ Account data saved successfully for @' + username + '\n');
-    
-    setTimeout(() => {
-      menu.remove();
-    }, 500);
-    
-    // Force refresh of badges
-    document.querySelectorAll('[data-xat-processed]').forEach(el => {
-      el.removeAttribute('data-xat-processed');
-    });
-    processUsernames();
+
+    try {
+      await saveAccount(username, {
+        sentiment: selectedSentiment,
+        topics: topics,
+        notes: notes,
+        interactionCount: existingData?.interactionCount || 0,
+        aiSuggested: aiAccepted,
+        aiAnalysis: aiSuggestion
+      });
+
+      // Success feedback
+      saveBtn.textContent = '✓ Saved!';
+      saveBtn.style.background = '#10b981';
+
+      console.log('✅ Account data saved successfully for @' + username + '\n');
+
+      setTimeout(() => {
+        menu.remove();
+      }, 500);
+
+      // Force refresh of badges
+      document.querySelectorAll('[data-xat-processed]').forEach(el => {
+        el.removeAttribute('data-xat-processed');
+      });
+      processUsernames();
+    } catch (error) {
+      // Error feedback
+      saveBtn.textContent = '✗ Error';
+      saveBtn.style.background = '#ef4444';
+      saveBtn.disabled = false;
+      saveBtn.style.opacity = '1';
+
+      console.error('❌ Failed to save account data:', error);
+
+      setTimeout(() => {
+        saveBtn.textContent = 'Save';
+        saveBtn.style.background = '';
+      }, 2000);
+    }
   });
   
   // Delete button
@@ -867,9 +1137,22 @@ function setupMenuListeners(menu, username, existingData, aiSuggestion) {
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (confirm(`Delete tracking data for @${username}?`)) {
-        await deleteAccount(username);
-        menu.remove();
-        document.querySelectorAll(`[data-username="${username}"]`).forEach(badge => badge.remove());
+        try {
+          deleteBtn.textContent = 'Deleting...';
+          deleteBtn.disabled = true;
+          await deleteAccount(username);
+          menu.remove();
+          document.querySelectorAll(`[data-username="${username}"]`).forEach(badge => badge.remove());
+        } catch (error) {
+          console.error(`Failed to delete account @${username}:`, error);
+          deleteBtn.textContent = '✗ Error';
+          deleteBtn.style.background = '#ef4444';
+          setTimeout(() => {
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.style.background = '';
+            deleteBtn.disabled = false;
+          }, 2000);
+        }
       }
     });
   }
@@ -896,7 +1179,7 @@ function setupMenuListeners(menu, username, existingData, aiSuggestion) {
 // Track interactions with posts
 function observeInteractions() {
   if (!aiConfig.features.patternRecognition) return;
-  
+
   document.addEventListener('click', async (e) => {
     const target = e.target.closest('[data-testid="like"], [data-testid="retweet"], [data-testid="unretweet"]');
     if (target) {
@@ -907,12 +1190,47 @@ function observeInteractions() {
           const username = extractUsername(usernameElement);
           if (username) {
             const interactionType = target.getAttribute('data-testid');
-            await recordInteraction(username, interactionType);
+            try {
+              await recordInteraction(username, interactionType);
+            } catch (error) {
+              console.error(`Failed to record interaction for @${username}:`, error);
+              // Continue silently - don't disrupt user's interaction with X
+            }
           }
         }
       }
     }
   }, true);
+}
+
+// Debounce utility function for performance optimization
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
+// Clear expired cache entries to prevent memory leaks
+function clearExpiredCache() {
+  const now = Date.now();
+  let clearedCount = 0;
+
+  for (const [username, cached] of postsCache.entries()) {
+    if (now - cached.timestamp >= CACHE_TTL_MS) {
+      postsCache.delete(username);
+      clearedCount++;
+    }
+  }
+
+  if (clearedCount > 0) {
+    console.log(`Cleared ${clearedCount} expired cache entries`);
+  }
 }
 
 // Initialize extension
@@ -936,18 +1254,24 @@ function observeInteractions() {
     }
     
     await processUsernames();
-    
+
+    // Debounce processUsernames to avoid excessive processing on rapid DOM changes
+    const debouncedProcessUsernames = debounce(processUsernames, 300);
+
     const observer = new MutationObserver(() => {
-      processUsernames();
+      debouncedProcessUsernames();
     });
-    
+
     observer.observe(document.body, {
       childList: true,
       subtree: true
     });
-    
+
     observeInteractions();
-    
+
+    // Clear expired cache entries every 5 minutes to prevent memory leaks
+    setInterval(clearExpiredCache, CACHE_TTL_MS);
+
     console.log('X Account Tracker v2.0: Active and monitoring');
   } catch (error) {
     console.error('X Account Tracker v2.0: Initialization error', error);
@@ -957,28 +1281,62 @@ function observeInteractions() {
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getAllAccounts') {
-    getAllAccounts().then(accounts => {
-      sendResponse({ accounts });
-    });
+    getAllAccounts()
+      .then(accounts => {
+        sendResponse({ accounts });
+      })
+      .catch(error => {
+        console.error('Error in getAllAccounts message handler:', error);
+        sendResponse({ accounts: [], error: error.message });
+      });
     return true;
   }
-  
+
   if (request.action === 'exportData') {
-    getAllAccounts().then(accounts => {
-      sendResponse({ data: accounts });
-    });
+    getAllAccounts()
+      .then(accounts => {
+        sendResponse({ data: accounts });
+      })
+      .catch(error => {
+        console.error('Error in exportData message handler:', error);
+        sendResponse({ data: [], error: error.message });
+      });
     return true;
   }
   
   if (request.action === 'importData') {
-    const transaction = db.transaction(['accounts'], 'readwrite');
-    const store = transaction.objectStore('accounts');
-    
-    request.data.forEach(account => {
-      store.put(account);
-    });
-    
-    sendResponse({ success: true });
+    try {
+      const { accounts, errors } = validateImportData(request.data);
+
+      const transaction = db.transaction(['accounts'], 'readwrite');
+      const store = transaction.objectStore('accounts');
+
+      accounts.forEach(account => {
+        store.put(account);
+      });
+
+      transaction.oncomplete = () => {
+        sendResponse({
+          success: true,
+          imported: accounts.length,
+          errors: errors.length > 0 ? errors : null
+        });
+      };
+
+      transaction.onerror = () => {
+        sendResponse({
+          success: false,
+          error: 'Database error during import'
+        });
+      };
+
+      return true;
+    } catch (error) {
+      sendResponse({
+        success: false,
+        error: error.message
+      });
+    }
   }
   
   if (request.action === 'testOllama') {
