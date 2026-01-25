@@ -19,7 +19,7 @@
         "https://x.com/*"
       ],
       "js": ["content.js"],
-      "css": ["styles.css"],
+      "css": ["styles.css", "styles-visibility-fix.css"],
       "run_at": "document_idle"
     }
   ],
@@ -37,4 +37,3 @@
     "128": "icon128.png"
   }
 }
-
