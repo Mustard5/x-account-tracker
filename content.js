@@ -23,16 +23,10 @@ let aiConfig = {
   ollamaUrl: 'http://localhost:11434',
   model: 'llama3.2:3b',
   features: {
-    contentAnalysis: false,
-    patternRecognition: false,
-    topicExtraction: false,
-    autoSuggest: false
+    patternRecognition: false
   }
 };
 
-// Post scraping cache (username -> {posts, timestamp})
-const postsCache = new Map();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // Input Validation Functions
 const VALID_SENTIMENTS = ['agree', 'disagree', 'mixed', 'expert', 'neutral', 'biased'];
@@ -272,110 +266,6 @@ function extractPostText(tweetElement) {
   return textElement ? textElement.textContent.trim() : '';
 }
 
-// Scrape recent posts from an account visible on page (with caching)
-async function scrapeRecentPosts(username) {
-  try {
-    // Check cache first
-    const cached = postsCache.get(username);
-    const now = Date.now();
-
-    if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
-      console.log(`Using cached posts for @${username} (age: ${Math.round((now - cached.timestamp) / 1000)}s)`);
-      return cached.posts;
-    }
-
-    // Cache miss or expired - scrape fresh posts
-    const posts = [];
-
-    // Find all tweets on the page
-    const articles = document.querySelectorAll('article');
-
-    for (const article of articles) {
-      // Check if this tweet is from the target username
-      const userElement = article.querySelector('[data-testid="User-Name"]');
-      if (!userElement) continue;
-
-      const articleUsername = extractUsername(userElement);
-      if (articleUsername === username) {
-        const postText = extractPostText(article);
-        if (postText && postText.length > 10) { // Ignore very short posts
-          posts.push(postText);
-
-          // Limit to 5 most recent posts to keep analysis fast
-          if (posts.length >= 5) break;
-        }
-      }
-    }
-
-    // Update cache
-    if (posts.length > 0) {
-      postsCache.set(username, {
-        posts,
-        timestamp: now
-      });
-      console.log(`Cached ${posts.length} posts for @${username}`);
-    }
-
-    return posts;
-  } catch (error) {
-    console.error(`Failed to scrape posts for @${username}:`, error);
-    return []; // Return empty array on error
-  }
-}
-
-// Analyze post content for sentiment and topics
-async function analyzePostContent(username, posts) {
-  if (!aiConfig.features.contentAnalysis || posts.length === 0) return null;
-  
-  console.log(`X Account Tracker: Analyzing ${posts.length} posts from @${username}...`);
-  
-  // Limit total text to avoid overwhelming the model
-  const recentPosts = posts.slice(0, 5).join('\n\n---\n\n');
-  
-  const systemPrompt = `You are analyzing social media posts to help a user track whether they agree or disagree with accounts. Focus on SPECIFIC VIEWPOINTS and POSITIONS with concrete examples. Respond ONLY with JSON:
-{
-  "overallSentiment": "agree|disagree|mixed|expert|neutral",
-  "topics": ["topic1", "topic2", "topic3"],
-  "confidence": 0.0-1.0,
-  "reasoning": "DETAILED: specific positions they take with examples from posts",
-  "expertise": "specific subjects they show knowledge about",
-  "perspectives": "ideological stance with specific examples (e.g., 'pro-market, skeptical of regulation - argues for free trade', 'progressive environmental views - advocates carbon tax')",
-  "keyQuotes": ["memorable/representative quote 1", "quote 2"]
-}`;
-  
-  const prompt = `Analyze these recent posts from @${username}:
-
-${recentPosts}
-
-Provide SPECIFIC analysis:
-- What exact viewpoints/positions do they express? Give examples.
-- What topics do they discuss? List specific subjects.
-- What ideological leanings are evident? Be concrete.
-- Are they presenting facts, opinions, or advocacy? How?
-- What memorable quotes capture their stance?
-
-Be detailed and specific. Use examples from the posts. Don't be vague.
-Respond with JSON only.`;
-  
-  const result = await analyzeWithOllama(prompt, systemPrompt);
-  if (!result) {
-    console.log(`X Account Tracker: Content analysis failed for @${username}`);
-    return null;
-  }
-  
-  try {
-    const jsonMatch = result.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      console.log(`X Account Tracker: Content analysis complete for @${username} - Found topics: ${parsed.topics.join(', ')}`);
-      return parsed;
-    }
-  } catch (error) {
-    console.error('Failed to parse AI content analysis:', error);
-  }
-  
-  return null;
-}
 
 // Get user interactions from DB
 async function getUserInteractions(username) {
@@ -398,33 +288,6 @@ async function getUserInteractions(username) {
   });
 }
 
-// Analyze interaction patterns
-async function analyzeInteractionPatterns(username) {
-  if (!aiConfig.features.patternRecognition) return null;
-
-  try {
-    const interactions = await getUserInteractions(username);
-    if (interactions.length < 3) return null; // Need some history
-
-    const likesCount = interactions.filter(i => i.type === 'like').length;
-    const retweetsCount = interactions.filter(i => i.type === 'retweet').length;
-    const totalInteractions = interactions.length;
-
-    // Simple pattern: if you mostly like/retweet, you probably agree
-    if (likesCount + retweetsCount > totalInteractions * 0.6) {
-      return {
-        suggestedSentiment: 'agree',
-        confidence: 0.7,
-        reasoning: `You've interacted positively with this account ${likesCount + retweetsCount} times out of ${totalInteractions} interactions`
-      };
-    }
-
-    return null;
-  } catch (error) {
-    console.error(`Failed to analyze interaction patterns for @${username}:`, error);
-    return null;
-  }
-}
 
 // Record an interaction
 async function recordInteraction(username, interactionType) {
@@ -451,73 +314,6 @@ async function recordInteraction(username, interactionType) {
   });
 }
 
-// Combine interaction patterns and content analysis - FIXED VERSION
-async function getCombinedAISuggestion(username) {
-  console.log(`🤖 Getting AI suggestion for @${username}...`);
-  
-  let patternAnalysis = null;
-  let contentAnalysis = null;
-  
-  // Get interaction pattern analysis
-  if (aiConfig.features.patternRecognition) {
-    console.log('  Analyzing interaction patterns...');
-    patternAnalysis = await analyzeInteractionPatterns(username);
-    if (patternAnalysis) {
-      console.log(`  ✓ Pattern analysis: ${patternAnalysis.suggestedSentiment} (${Math.round(patternAnalysis.confidence * 100)}%)`);
-    }
-  }
-  
-  // Get content analysis if enabled
-  if (aiConfig.features.contentAnalysis) {
-    console.log('  Scraping recent posts...');
-    const posts = await scrapeRecentPosts(username);
-    console.log(`  Found ${posts.length} posts`);
-    
-    if (posts.length > 0) {
-      console.log('  Analyzing content...');
-      contentAnalysis = await analyzePostContent(username, posts);
-      if (contentAnalysis) {
-        console.log(`  ✓ Content analysis: ${contentAnalysis.overallSentiment} (${Math.round(contentAnalysis.confidence * 100)}%)`);
-      }
-    }
-  }
-  
-  // Combine both analyses
-  if (contentAnalysis && patternAnalysis) {
-    // Use content analysis but boost confidence with pattern agreement
-    if (contentAnalysis.overallSentiment === patternAnalysis.suggestedSentiment) {
-      console.log('  ✓ Both analyses agree!');
-      return {
-        ...contentAnalysis,
-        suggestedSentiment: contentAnalysis.overallSentiment,
-        confidence: Math.min(contentAnalysis.confidence + 0.15, 1.0),
-        reasoning: contentAnalysis.reasoning + `\n\nYour interaction pattern also suggests "${patternAnalysis.suggestedSentiment}".`
-      };
-    }
-    console.log('  ⚠ Analyses differ, using content analysis');
-    return {
-      ...contentAnalysis,
-      suggestedSentiment: contentAnalysis.overallSentiment,
-      reasoning: contentAnalysis.reasoning + `\n\n(Note: Your interactions suggest "${patternAnalysis.suggestedSentiment}", but content analysis says "${contentAnalysis.overallSentiment}")`
-    };
-  }
-  
-  if (contentAnalysis) {
-    console.log('  ✓ Returning content analysis');
-    return {
-      ...contentAnalysis,
-      suggestedSentiment: contentAnalysis.overallSentiment
-    };
-  }
-  
-  if (patternAnalysis) {
-    console.log('  ✓ Returning pattern analysis');
-    return patternAnalysis;
-  }
-  
-  console.log('  ❌ No AI analysis available');
-  return null;
-}
 
 // Database operations
 async function saveAccount(username, data) {
@@ -833,7 +629,7 @@ function createBadge(sentiment, topics = {}, aiSuggested = false) {
 }
 
 // Create tagging menu
-function createTaggingMenu(username, existingData = null, aiSuggestion = null) {
+function createTaggingMenu(username, existingData = null) {
   const menu = document.createElement('div');
   menu.className = 'xat-menu';
   
@@ -863,62 +659,6 @@ function createTaggingMenu(username, existingData = null, aiSuggestion = null) {
   const body = document.createElement('div');
   body.className = 'xat-menu-body';
   
-  // AI Suggestion Section (if available)
-  if (aiSuggestion && aiConfig.features.autoSuggest) {
-    const aiSection = document.createElement('div');
-    aiSection.className = 'xat-ai-suggestion';
-
-    const confidencePercent = Math.round(aiSuggestion.confidence * 100);
-    const confidenceColor = aiSuggestion.confidence > 0.7 ? '#10b981' : aiSuggestion.confidence > 0.5 ? '#f59e0b' : '#ef4444';
-
-    // AI Header
-    const aiHeader = document.createElement('div');
-    aiHeader.className = 'xat-ai-header';
-    const aiHeaderSpan = document.createElement('span');
-    aiHeaderSpan.textContent = '🤖 AI Suggestion';
-    const aiConfidence = document.createElement('span');
-    aiConfidence.className = 'xat-ai-confidence';
-    aiConfidence.style.color = confidenceColor;
-    aiConfidence.style.fontWeight = '700';
-    aiConfidence.textContent = `${confidencePercent}% confident`;
-    aiHeader.appendChild(aiHeaderSpan);
-    aiHeader.appendChild(aiConfidence);
-    aiSection.appendChild(aiHeader);
-
-    // AI Sentiment
-    const aiSentimentDiv = document.createElement('div');
-    aiSentimentDiv.className = 'xat-ai-sentiment';
-    aiSentimentDiv.textContent = 'Suggested: ';
-    const sentimentStrong = document.createElement('strong');
-    sentimentStrong.textContent = aiSuggestion.suggestedSentiment;
-    aiSentimentDiv.appendChild(sentimentStrong);
-    aiSection.appendChild(aiSentimentDiv);
-
-    // AI Reasoning (sanitized)
-    if (aiSuggestion.reasoning) {
-      const reasoningDiv = document.createElement('div');
-      reasoningDiv.className = 'xat-ai-reasoning';
-      reasoningDiv.textContent = aiSuggestion.reasoning;
-      aiSection.appendChild(reasoningDiv);
-    }
-
-    // AI Topics (sanitized)
-    if (aiSuggestion.topics && aiSuggestion.topics.length > 0) {
-      const topicsDiv = document.createElement('div');
-      topicsDiv.className = 'xat-ai-topics';
-      topicsDiv.textContent = `Topics: ${aiSuggestion.topics.join(', ')}`;
-      aiSection.appendChild(topicsDiv);
-    }
-
-    // Accept Button
-    const acceptBtn = document.createElement('button');
-    acceptBtn.className = 'xat-ai-accept';
-    acceptBtn.textContent = 'Accept AI Suggestion';
-    aiSection.appendChild(acceptBtn);
-
-    body.appendChild(aiSection);
-  }
-  
   // Sentiment buttons
   const sentimentSection = document.createElement('div');
   sentimentSection.className = 'xat-sentiment-section';
@@ -934,7 +674,7 @@ function createTaggingMenu(username, existingData = null, aiSuggestion = null) {
     btn.setAttribute('data-sentiment', sentiment);
     btn.textContent = sentiment.charAt(0).toUpperCase() + sentiment.slice(1);
     
-    if (existingData?.sentiment === sentiment || aiSuggestion?.suggestedSentiment === sentiment) {
+    if (existingData?.sentiment === sentiment) {
       btn.classList.add('active');
     }
     
@@ -1064,64 +804,16 @@ async function processUsernames() {
       });
     }
     
-    // Add hover listener - FIXED VERSION: Always runs AI if autoSuggest is enabled
+    // Add hover listener for manual tagging
     element.addEventListener('mouseenter', () => {
       if (!element.querySelector('.xat-quick-tag')) {
         const quickTag = document.createElement('button');
         quickTag.className = 'xat-quick-tag';
         quickTag.textContent = '+ Tag';
-        quickTag.addEventListener('click', async (e) => {
+        quickTag.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
-          
-          let aiSuggestion = null;
-          
-          // FIXED: Run AI even if account exists, as long as autoSuggest is enabled
-          if (aiConfig.enabled && aiConfig.features.autoSuggest) {
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-            console.log(`🏷️  +Tag clicked for @${username}`);
-            console.log(`   AI enabled: ${aiConfig.enabled}`);
-            console.log(`   autoSuggest: ${aiConfig.features.autoSuggest}`);
-            console.log(`   contentAnalysis: ${aiConfig.features.contentAnalysis}`);
-            console.log(`   patternRecognition: ${aiConfig.features.patternRecognition}`);
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-            
-            // Show AI working indicator
-            const analysisTypes = [];
-            if (aiConfig.features.contentAnalysis) analysisTypes.push('posts');
-            if (aiConfig.features.patternRecognition) analysisTypes.push('interactions');
-            
-            const analysisText = analysisTypes.length > 0 ? 
-              `Analyzing ${analysisTypes.join(' & ')}...` : 
-              'Analyzing...';
-            
-            quickTag.innerHTML = `🤖 <span style="font-size: 10px;">${analysisText}</span>`;
-            quickTag.style.width = 'auto';
-            quickTag.style.minWidth = '180px';
-            
-            const startTime = Date.now();
-            aiSuggestion = await getCombinedAISuggestion(username);
-            const elapsed = Date.now() - startTime;
-            
-            if (aiSuggestion) {
-              quickTag.innerHTML = `✓ <span style="font-size: 10px;">Ready (${(elapsed/1000).toFixed(1)}s)</span>`;
-              console.log(`✅ AI analysis complete in ${(elapsed/1000).toFixed(1)}s`);
-              setTimeout(() => {
-                quickTag.textContent = '+ Tag';
-                quickTag.style.width = '';
-                quickTag.style.minWidth = '';
-              }, 1000);
-            } else {
-              console.log(`⚠️  AI analysis returned no suggestion`);
-              quickTag.textContent = '+ Tag';
-              quickTag.style.width = '';
-              quickTag.style.minWidth = '';
-            }
-          } else {
-            console.log(`ℹ️  AI not running - enabled: ${aiConfig.enabled}, autoSuggest: ${aiConfig.features.autoSuggest}`);
-          }
-          
-          showTaggingMenu(username, accountData, quickTag, aiSuggestion);
+          showTaggingMenu(username, accountData, quickTag);
         });
         element.appendChild(quickTag);
       }
@@ -1428,22 +1120,6 @@ function debounce(func, wait) {
   };
 }
 
-// Clear expired cache entries to prevent memory leaks
-function clearExpiredCache() {
-  const now = Date.now();
-  let clearedCount = 0;
-
-  for (const [username, cached] of postsCache.entries()) {
-    if (now - cached.timestamp >= CACHE_TTL_MS) {
-      postsCache.delete(username);
-      clearedCount++;
-    }
-  }
-
-  if (clearedCount > 0) {
-    console.log(`Cleared ${clearedCount} expired cache entries`);
-  }
-}
 
 // Initialize extension
 (async function init() {
@@ -1480,9 +1156,6 @@ function clearExpiredCache() {
     });
 
     observeInteractions();
-
-    // Clear expired cache entries every 5 minutes to prevent memory leaks
-    setInterval(clearExpiredCache, CACHE_TTL_MS);
 
     // Periodically flush any accumulated signals (5 min fallback)
     setInterval(() => { if (signalQueue.length > 0) flushSignalQueue(); }, BATCH_FLUSH_INTERVAL_MS);

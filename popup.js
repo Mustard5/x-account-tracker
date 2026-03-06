@@ -190,20 +190,14 @@ async function loadAISettings() {
       ollamaUrl: 'http://localhost:11434',
       model: 'llama3.2:3b',
       features: {
-        contentAnalysis: false,
-        patternRecognition: false,
-        topicExtraction: false,
-        autoSuggest: false
+        patternRecognition: false
       }
     };
 
     document.getElementById('aiEnabled').checked          = config.enabled;
     document.getElementById('ollamaUrl').value            = config.ollamaUrl;
     document.getElementById('ollamaModel').value          = config.model;
-    document.getElementById('contentAnalysis').checked    = config.features.contentAnalysis;
     document.getElementById('patternRecognition').checked = config.features.patternRecognition;
-    document.getElementById('topicExtraction').checked    = config.features.topicExtraction;
-    document.getElementById('autoSuggest').checked        = config.features.autoSuggest;
 
     testConnectionStatus();
   });
@@ -254,10 +248,7 @@ document.getElementById('saveAISettings')?.addEventListener('click', () => {
     ollamaUrl: document.getElementById('ollamaUrl').value,
     model:    document.getElementById('ollamaModel').value,
     features: {
-      contentAnalysis:    document.getElementById('contentAnalysis').checked,
-      patternRecognition: document.getElementById('patternRecognition').checked,
-      topicExtraction:    document.getElementById('topicExtraction').checked,
-      autoSuggest:        document.getElementById('autoSuggest').checked
+      patternRecognition: document.getElementById('patternRecognition').checked
     }
   };
 
