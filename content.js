@@ -1267,6 +1267,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
   }
   
+  if (request.action === 'clearAllData') {
+    const stores = ['accounts', 'interactions', 'feedObservations', 'accountProfiles'];
+    try {
+      // Count records first so we can report them
+      const counts = await Promise.all(
+        stores.map(storeName => getAllStoreRecords(storeName).then(r => ({ storeName, count: r.length })))
+      );
+      const countMap = Object.fromEntries(counts.map(({ storeName, count }) => [storeName, count]));
+
+      const transaction = db.transaction(stores, 'readwrite');
+      for (const storeName of stores) {
+        transaction.objectStore(storeName).clear();
+      }
+      transaction.oncomplete = () => sendResponse({ success: true, deleted: countMap });
+      transaction.onerror   = () => sendResponse({ success: false, error: 'Database error during clear' });
+    } catch (error) {
+      sendResponse({ success: false, error: error.message });
+    }
+    return true;
+  }
+
   if (request.action === 'testOllama') {
     testOllamaConnection().then(result => {
       sendResponse(result);

@@ -319,6 +319,31 @@ document.getElementById('saveAISettings')?.addEventListener('click', () => {
   });
 });
 
+document.getElementById('clearAllData')?.addEventListener('click', () => {
+  if (!confirm('This will delete all collected data. Continue?')) return;
+
+  getActiveXTab(tab => {
+    if (!tab) { showStatus('Open X/Twitter first', 'error', 'aiStatus'); return; }
+
+    chrome.tabs.sendMessage(tab.id, { action: 'clearAllData' }, response => {
+      if (chrome.runtime.lastError || !response) {
+        showStatus('Clear failed. Reload X and try again.', 'error', 'aiStatus');
+        return;
+      }
+      if (response.success) {
+        const { accounts = 0, interactions = 0, feedObservations = 0, accountProfiles = 0 } = response.deleted;
+        showStatus(
+          `Cleared ${accounts} accounts, ${interactions} interactions, ${feedObservations} observations, ${accountProfiles} profiles.`,
+          'success',
+          'aiStatus'
+        );
+      } else {
+        showStatus(`Clear failed: ${response.error}`, 'error', 'aiStatus');
+      }
+    });
+  });
+});
+
 // ── Export / Import ────────────────────────────────────────────────────────
 
 document.getElementById('exportData')?.addEventListener('click', () => {

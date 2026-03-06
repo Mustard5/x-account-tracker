@@ -420,6 +420,23 @@
 
     .btn-test:hover { background: #2563eb; }
 
+    .danger-section {
+      border: 1px solid #fecaca;
+      background: #fff5f5;
+    }
+
+    .danger-section h2 { color: #991b1b; }
+
+    .btn-danger {
+      background: #ef4444;
+      color: white;
+      font-size: 12px;
+      padding: 7px 14px;
+      flex-shrink: 0;
+    }
+
+    .btn-danger:hover { background: #dc2626; }
+
     #aiStatus {
       margin-top: 10px;
       padding: 8px 12px;
@@ -511,6 +528,17 @@
 
       <button class="btn-primary" id="saveAISettings">Save Settings</button>
       <div id="aiStatus"></div>
+
+      <div class="setting-section danger-section">
+        <h2>Danger Zone</h2>
+        <div class="setting-row">
+          <div class="setting-label">
+            <strong>Clear All Data</strong>
+            <span>Delete all accounts, interactions, observations, and profiles</span>
+          </div>
+          <button class="btn-danger" id="clearAllData">Clear</button>
+        </div>
+      </div>
     </div>
   </div>
 
