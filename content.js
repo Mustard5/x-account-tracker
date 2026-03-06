@@ -1,8 +1,14 @@
 // X Account Tracker v2.0 - AI-Enhanced Content Script (FIXED - AI ALWAYS RUNS)
 
 const DB_NAME = 'XAccountTrackerDB';
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 let db = null;
+
+// Sprint 1: Passive feed observation
+const signalQueue = [];
+const BATCH_THRESHOLD = 20;
+const BATCH_FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const dwellTracker = new WeakMap(); // article element -> entry timestamp
 
 // AI Configuration (loaded from storage)
 let aiConfig = {
@@ -150,6 +156,14 @@ async function initDB() {
         const aiStore = db.createObjectStore('aiAnalysis', { keyPath: 'id', autoIncrement: true });
         aiStore.createIndex('username', 'username', { unique: false });
         aiStore.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+
+      // Sprint 1: Passive feed observations
+      if (!db.objectStoreNames.contains('feedObservations')) {
+        const obsStore = db.createObjectStore('feedObservations', { keyPath: 'id', autoIncrement: true });
+        obsStore.createIndex('username', 'username', { unique: false });
+        obsStore.createIndex('timestamp', 'timestamp', { unique: false });
+        obsStore.createIndex('category', 'category', { unique: false });
       }
     };
   });
@@ -589,6 +603,58 @@ function extractUsername(element) {
   return username;
 }
 
+// Collect a feed signal into the in-memory queue
+function collectFeedSignal(username, postText, dwellTime) {
+  signalQueue.push({ username, postText, dwellTime, timestamp: Date.now() });
+  console.log(`[XAT Feed] Signal: @${username} — ${dwellTime}ms dwell — queue: ${signalQueue.length}`);
+  if (signalQueue.length >= BATCH_THRESHOLD) {
+    flushSignalQueue();
+  }
+}
+
+// Write accumulated signals to IndexedDB
+async function flushSignalQueue() {
+  if (signalQueue.length === 0 || !db) return;
+  const batch = signalQueue.splice(0, signalQueue.length);
+  console.log(`[XAT Feed] Flushing ${batch.length} signals to IndexedDB...`);
+  try {
+    const transaction = db.transaction(['feedObservations'], 'readwrite');
+    const store = transaction.objectStore('feedObservations');
+    for (const signal of batch) {
+      store.add(signal);
+    }
+    await new Promise((resolve, reject) => {
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+    });
+    console.log(`[XAT Feed] Flush complete. ${batch.length} signals written.`);
+  } catch (error) {
+    console.error('[XAT Feed] Flush failed:', error);
+    signalQueue.unshift(...batch); // put them back
+  }
+}
+
+// Observe tweet articles entering/exiting the viewport to measure dwell time
+const viewportObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    const article = entry.target;
+    if (entry.isIntersecting) {
+      dwellTracker.set(article, Date.now());
+    } else {
+      const entryTime = dwellTracker.get(article);
+      if (entryTime) {
+        const dwellTime = Date.now() - entryTime;
+        const username = extractUsername(article);
+        if (username) {
+          const postText = extractPostText(article);
+          collectFeedSignal(username, postText, dwellTime);
+        }
+        dwellTracker.delete(article);
+      }
+    }
+  });
+}, { threshold: 0.5 });
+
 // Create badge element
 function createBadge(sentiment, topics = {}, aiSuggested = false) {
   const badge = document.createElement('div');
@@ -818,6 +884,13 @@ async function processUsernames() {
 
     const username = extractUsername(element);
     if (!username || username === 'i') continue; // Skip invalid usernames
+
+    // Observe the parent article for dwell time tracking
+    const article = element.closest('article');
+    if (article && !article.hasAttribute('data-xat-observed')) {
+      article.setAttribute('data-xat-observed', 'true');
+      viewportObserver.observe(article);
+    }
 
     let accountData = null;
     try {
@@ -1271,6 +1344,9 @@ function clearExpiredCache() {
 
     // Clear expired cache entries every 5 minutes to prevent memory leaks
     setInterval(clearExpiredCache, CACHE_TTL_MS);
+
+    // Periodically flush any accumulated signals (5 min fallback)
+    setInterval(() => { if (signalQueue.length > 0) flushSignalQueue(); }, BATCH_FLUSH_INTERVAL_MS);
 
     console.log('X Account Tracker v2.0: Active and monitoring');
   } catch (error) {
