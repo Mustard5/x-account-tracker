@@ -1,7 +1,7 @@
 // X Account Tracker v2.0 - AI-Enhanced Content Script (FIXED - AI ALWAYS RUNS)
 
 const DB_NAME = 'XAccountTrackerDB';
-const DB_VERSION = 8;
+const DB_VERSION = 9;
 let db = null;
 
 // Sprint 1: Passive feed observation
@@ -9,6 +9,13 @@ const signalQueue = [];
 const BATCH_THRESHOLD = 20;
 const BATCH_FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const dwellTracker = new WeakMap(); // article element -> entry timestamp
+
+// Sprint 2: Batch categorization
+const CAT_MIN_ACCOUNTS = 5;
+const VALID_CATEGORIES = ['Technology', 'AI/ML', 'Politics', 'Faith/Spirituality',
+  'Finance/Crypto', 'Sports', 'Entertainment', 'Science', 'News/Media',
+  'Personal/Lifestyle', 'Other'];
+const pendingCategorization = new Set(); // usernames seen since last categorization run
 
 // AI Configuration (loaded from storage)
 let aiConfig = {
@@ -165,6 +172,14 @@ async function initDB() {
         obsStore.createIndex('timestamp', 'timestamp', { unique: false });
         obsStore.createIndex('category', 'category', { unique: false });
       }
+
+      // Sprint 2: Account category profiles
+      if (!db.objectStoreNames.contains('accountProfiles')) {
+        const profileStore = db.createObjectStore('accountProfiles', { keyPath: 'username' });
+        profileStore.createIndex('category', 'category', { unique: false });
+        profileStore.createIndex('lastSeen', 'lastSeen', { unique: false });
+        profileStore.createIndex('categorizedAt', 'categorizedAt', { unique: false });
+      }
     };
   });
 }
@@ -196,7 +211,7 @@ async function testOllamaConnection() {
 }
 
 // Call Ollama API for text analysis
-async function analyzeWithOllama(prompt, systemPrompt = '') {
+async function analyzeWithOllama(prompt, systemPrompt = '', numPredict = 200) {
   if (!aiConfig.enabled) {
     console.log('❌ AI disabled in settings');
     return null;
@@ -230,7 +245,7 @@ async function analyzeWithOllama(prompt, systemPrompt = '') {
         stream: false,
         options: {
           temperature: 0.3,
-          num_predict: 200  // Increased for more detailed responses
+          num_predict: numPredict
         }
       })
     });
@@ -606,6 +621,7 @@ function extractUsername(element) {
 // Collect a feed signal into the in-memory queue
 function collectFeedSignal(username, postText, dwellTime) {
   signalQueue.push({ username, postText, dwellTime, timestamp: Date.now() });
+  pendingCategorization.add(username);
   console.log(`[XAT Feed] Signal: @${username} — ${dwellTime}ms dwell — queue: ${signalQueue.length}`);
   if (signalQueue.length >= BATCH_THRESHOLD) {
     flushSignalQueue();
@@ -628,9 +644,132 @@ async function flushSignalQueue() {
       transaction.onerror = () => reject(transaction.error);
     });
     console.log(`[XAT Feed] Flush complete. ${batch.length} signals written.`);
+    scheduleCategorizationIfNeeded();
   } catch (error) {
     console.error('[XAT Feed] Flush failed:', error);
     signalQueue.unshift(...batch); // put them back
+  }
+}
+
+// Read recent feedObservations for a set of usernames to build categorization input
+async function gatherAccountSamples(usernames) {
+  const samples = [];
+  for (const username of usernames) {
+    try {
+      const records = await new Promise((resolve, reject) => {
+        const tx = db.transaction(['feedObservations'], 'readonly');
+        const index = tx.objectStore('feedObservations').index('username');
+        const req = index.getAll(username);
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+      if (records.length === 0) continue;
+      const posts = records.map(r => r.postText).filter(t => t && t.length > 10);
+      const avgDwell = Math.round(records.reduce((sum, r) => sum + r.dwellTime, 0) / records.length);
+      samples.push({ username, posts, avgDwell, signalCount: records.length });
+    } catch (error) {
+      console.error(`[XAT Cat] Failed to gather samples for @${username}:`, error);
+    }
+  }
+  return samples;
+}
+
+// Write categorization results to accountProfiles store
+async function saveAccountProfiles(samples, categories) {
+  const tx = db.transaction(['accountProfiles'], 'readwrite');
+  const store = tx.objectStore('accountProfiles');
+  const now = new Date().toISOString();
+  for (const sample of samples) {
+    const raw = categories[sample.username];
+    const category = VALID_CATEGORIES.includes(raw) ? raw : 'Other';
+    store.put({
+      username: sample.username,
+      category,
+      avgDwell: sample.avgDwell,
+      signalCount: sample.signalCount,
+      lastSeen: now,
+      categorizedAt: now
+    });
+  }
+  await new Promise((resolve, reject) => {
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Send a batch of accounts to Ollama for topic categorization
+async function categorizeAccountBatch() {
+  if (!aiConfig.enabled || pendingCategorization.size === 0) return;
+
+  const usernames = [...pendingCategorization];
+  pendingCategorization.clear();
+  console.log(`[XAT Cat] Categorizing ${usernames.length} accounts...`);
+
+  const samples = await gatherAccountSamples(usernames);
+  if (samples.length === 0) return;
+
+  const accountsText = samples.map(({ username, posts }) => {
+    const excerpts = posts.slice(0, 2).map(p => p.substring(0, 200)).join('\n');
+    return `@${username}:\n${excerpts || '(no post text)'}`;
+  }).join('\n\n');
+
+  const systemPrompt = `You are categorizing X/Twitter accounts by their primary topic. Assign each account exactly ONE category from this list: Technology, AI/ML, Politics, Faith/Spirituality, Finance/Crypto, Sports, Entertainment, Science, News/Media, Personal/Lifestyle, Other. Respond ONLY with a single JSON object mapping each handle to its category. Example format: {"pmarca": "Technology", "FoxNews": "News/Media", "SenWarren": "Politics"}. No explanation. No markdown. No arrays.`;
+  const prompt = `Categorize these accounts based on their posts:\n\n${accountsText}\n\nRespond with a single JSON object only. Example: {"handle1": "Category1", "handle2": "Category2"}`;
+
+  const result = await analyzeWithOllama(prompt, systemPrompt, 600);
+  if (!result) {
+    usernames.forEach(u => pendingCategorization.add(u)); // restore for retry
+    return;
+  }
+
+  let categories = {};
+  try {
+    // Primary: match a JSON object {"handle": "Category", ...}
+    const objMatch = result.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      const parsed = JSON.parse(objMatch[0]);
+      // Verify values are strings (not nested objects from wrong format)
+      if (Object.values(parsed).every(v => typeof v === 'string')) {
+        categories = parsed;
+      }
+    }
+    // Fallback: model returned array format [{"username": "x", "category": "y"}]
+    if (Object.keys(categories).length === 0) {
+      const arrMatch = result.match(/\[[\s\S]*\]/);
+      if (arrMatch) {
+        const arr = JSON.parse(arrMatch[0]);
+        if (Array.isArray(arr)) {
+          for (const item of arr) {
+            if (item.username && item.category) categories[item.username] = item.category;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[XAT Cat] Failed to parse categorization response:', error);
+    usernames.forEach(u => pendingCategorization.add(u));
+    return;
+  }
+
+  if (Object.keys(categories).length === 0) {
+    console.warn('[XAT Cat] No categories parsed from response, will retry next flush');
+    usernames.forEach(u => pendingCategorization.add(u));
+    return;
+  }
+
+  await saveAccountProfiles(samples, categories);
+  const summary = Object.entries(categories).map(([u, c]) => `@${u}→${c}`).join(', ');
+  console.log(`[XAT Cat] Done: ${summary}`);
+}
+
+// Schedule categorization during browser idle time if enough accounts are pending
+function scheduleCategorizationIfNeeded() {
+  if (!aiConfig.enabled || pendingCategorization.size < CAT_MIN_ACCOUNTS) return;
+  console.log(`[XAT Cat] Scheduling categorization for ${pendingCategorization.size} accounts`);
+  if (typeof requestIdleCallback !== 'undefined') {
+    requestIdleCallback(() => categorizeAccountBatch(), { timeout: 30000 });
+  } else {
+    setTimeout(() => categorizeAccountBatch(), 5000);
   }
 }
 
