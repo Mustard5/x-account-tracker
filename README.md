@@ -137,6 +137,23 @@ Set environment variable `OLLAMA_ORIGINS` to `chrome-extension://YOUR_EXTENSION_
 
 The extension processes signals in batches during browser idle time, so categorization happens in the background without impacting your browsing.
 
+## Troubleshooting
+
+### Brave Shields Blocking Ollama
+
+Brave Shields may block requests to your local Ollama server, preventing categorization from working.
+
+**Symptoms:**
+- Signals collect but accounts never get categorized
+- Console shows fetch errors to localhost:11434
+
+**Fix:**
+1. While on x.com, click the Brave Shields icon (lion) in the address bar
+2. Set tracker blocking to "Allow all trackers & ads" for this site
+3. Refresh the page
+
+This only affects x.com — your other browsing remains protected. The extension only communicates with localhost, so allowing trackers on x.com doesn't expose you to external tracking.
+
 ## What You'll See
 
 After browsing for a while, your dashboard might show:
