@@ -1270,16 +1270,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'clearAllData') {
     const stores = ['accounts', 'interactions', 'feedObservations', 'accountProfiles'];
     try {
-      // Count records first so we can report them
-      const counts = await Promise.all(
-        stores.map(storeName => getAllStoreRecords(storeName).then(r => ({ storeName, count: r.length })))
-      );
-      const countMap = Object.fromEntries(counts.map(({ storeName, count }) => [storeName, count]));
-
       const transaction = db.transaction(stores, 'readwrite');
-      for (const storeName of stores) {
-        transaction.objectStore(storeName).clear();
-      }
+      const countMap = {};
+      let pending = stores.length;
+
+      stores.forEach(storeName => {
+        const objectStore = transaction.objectStore(storeName);
+        const countReq = objectStore.count();
+        countReq.onsuccess = () => {
+          countMap[storeName] = countReq.result;
+          objectStore.clear();
+          pending--;
+        };
+      });
+
       transaction.oncomplete = () => sendResponse({ success: true, deleted: countMap });
       transaction.onerror   = () => sendResponse({ success: false, error: 'Database error during clear' });
     } catch (error) {
