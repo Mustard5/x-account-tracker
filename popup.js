@@ -331,14 +331,20 @@ document.getElementById('exportData')?.addEventListener('click', () => {
         return;
       }
 
+      const timestamp = new Date().toISOString().replace('T', '_').slice(0, 16).replace(':', '-');
       const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
-      a.download = `xat-export-${new Date().toISOString().split('T')[0]}.json`;
+      a.download = `xat-export-${timestamp}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      showStatus('Data exported.', 'success');
+
+      const { accounts = [], interactions = [], feedObservations = [], accountProfiles = [] } = response.data;
+      showStatus(
+        `Exported ${accounts.length} accounts, ${interactions.length} interactions, ${feedObservations.length} observations, ${accountProfiles.length} profiles.`,
+        'success'
+      );
     });
   });
 });
@@ -361,6 +367,8 @@ document.getElementById('fileInput')?.addEventListener('change', e => {
       return;
     }
 
+    if (!confirm('This will overwrite existing data in all stores. Continue?')) return;
+
     getActiveXTab(tab => {
       if (!tab) { showStatus('Open X/Twitter first', 'error'); return; }
 
@@ -370,7 +378,15 @@ document.getElementById('fileInput')?.addEventListener('change', e => {
           return;
         }
         if (response.success) {
-          showStatus(`Imported ${response.imported} accounts.`, 'success');
+          if (response.version === 2) {
+            const { accounts = 0, interactions = 0, feedObservations = 0, accountProfiles = 0 } = response.imported;
+            showStatus(
+              `Imported ${accounts} accounts, ${interactions} interactions, ${feedObservations} observations, ${accountProfiles} profiles.`,
+              'success'
+            );
+          } else {
+            showStatus(`Imported ${response.imported.accounts} accounts.`, 'success');
+          }
         } else {
           showStatus(`Import failed: ${response.error}`, 'error');
         }

@@ -396,6 +396,36 @@ async function getAllAccounts() {
   });
 }
 
+function getAllStoreRecords(storeName) {
+  return new Promise((resolve, reject) => {
+    try {
+      const transaction = db.transaction([storeName], 'readonly');
+      const request = transaction.objectStore(storeName).getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+async function exportAllData() {
+  const [accounts, interactions, feedObservations, accountProfiles] = await Promise.all([
+    getAllStoreRecords('accounts'),
+    getAllStoreRecords('interactions'),
+    getAllStoreRecords('feedObservations'),
+    getAllStoreRecords('accountProfiles'),
+  ]);
+  return {
+    version: 2,
+    exportDate: new Date().toISOString(),
+    accounts,
+    interactions,
+    feedObservations,
+    accountProfiles,
+  };
+}
+
 // Extract username from User-Name element
 function extractUsername(element) {
   const link = element.querySelector('a[href^="/"]');
@@ -1182,49 +1212,58 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'exportData') {
-    getAllAccounts()
-      .then(accounts => {
-        sendResponse({ data: accounts });
-      })
+    exportAllData()
+      .then(data => sendResponse({ data }))
       .catch(error => {
         console.error('Error in exportData message handler:', error);
-        sendResponse({ data: [], error: error.message });
+        sendResponse({ data: null, error: error.message });
       });
     return true;
   }
   
   if (request.action === 'importData') {
     try {
-      const { accounts, errors } = validateImportData(request.data);
+      const file = request.data;
+      const isV2 = file && typeof file === 'object' && file.version === 2;
 
-      const transaction = db.transaction(['accounts'], 'readwrite');
-      const store = transaction.objectStore('accounts');
+      if (isV2) {
+        // v2: restore all four stores in one transaction
+        const stores = ['accounts', 'interactions', 'feedObservations', 'accountProfiles'];
+        const transaction = db.transaction(stores, 'readwrite');
+        const counts = { accounts: 0, interactions: 0, feedObservations: 0, accountProfiles: 0 };
 
-      accounts.forEach(account => {
-        store.put(account);
-      });
+        for (const storeName of stores) {
+          const records = file[storeName];
+          if (!Array.isArray(records)) continue;
+          const store = transaction.objectStore(storeName);
+          for (const record of records) {
+            store.put(record);
+            counts[storeName]++;
+          }
+        }
 
-      transaction.oncomplete = () => {
-        sendResponse({
+        transaction.oncomplete = () => sendResponse({ success: true, version: 2, imported: counts });
+        transaction.onerror   = () => sendResponse({ success: false, error: 'Database error during import' });
+      } else {
+        // v1 legacy: raw accounts array
+        const { accounts, errors } = validateImportData(Array.isArray(file) ? file : []);
+
+        const transaction = db.transaction(['accounts'], 'readwrite');
+        const store = transaction.objectStore('accounts');
+        accounts.forEach(account => store.put(account));
+
+        transaction.oncomplete = () => sendResponse({
           success: true,
-          imported: accounts.length,
-          errors: errors.length > 0 ? errors : null
+          version: 1,
+          imported: { accounts: accounts.length },
+          errors: errors.length > 0 ? errors : null,
         });
-      };
-
-      transaction.onerror = () => {
-        sendResponse({
-          success: false,
-          error: 'Database error during import'
-        });
-      };
+        transaction.onerror = () => sendResponse({ success: false, error: 'Database error during import' });
+      }
 
       return true;
     } catch (error) {
-      sendResponse({
-        success: false,
-        error: error.message
-      });
+      sendResponse({ success: false, error: error.message });
     }
   }
   
