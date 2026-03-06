@@ -3,26 +3,28 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>X Account Tracker v2.0</title>
+  <title>X Account Tracker</title>
   <style>
     * {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
     }
-    
+
     body {
-      width: 450px;
+      width: 420px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: #f7f9f9;
+      color: #0f1419;
     }
-    
+
+    /* ── Tabs ── */
     .tabs {
       display: flex;
       background: white;
       border-bottom: 1px solid #e5e7eb;
     }
-    
+
     .tab {
       flex: 1;
       padding: 12px;
@@ -36,208 +38,285 @@
       border-bottom: 2px solid transparent;
       transition: all 0.2s ease;
     }
-    
+
     .tab.active {
       color: #1d9bf0;
       border-bottom-color: #1d9bf0;
     }
-    
+
     .tab-content {
       display: none;
-      padding: 20px;
     }
-    
+
     .tab-content.active {
       display: block;
     }
-    
-    h1 {
-      font-size: 20px;
-      margin-bottom: 16px;
-      color: #0f1419;
+
+    /* ── Categories tab ── */
+    .cat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 16px 16px 10px;
     }
-    
-    h2 {
+
+    .cat-title {
       font-size: 16px;
-      margin-bottom: 12px;
+      font-weight: 700;
       color: #0f1419;
     }
-    
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
-      margin-bottom: 20px;
-    }
-    
-    .stat-card {
-      background: white;
-      padding: 12px;
-      border-radius: 10px;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-    }
-    
-    .stat-value {
-      font-size: 24px;
-      font-weight: 700;
-      color: #1d9bf0;
-    }
-    
-    .stat-label {
+
+    .cat-total {
       font-size: 12px;
       color: #536471;
-      margin-top: 4px;
     }
-    
-    .actions {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+
+    #categoryList {
+      padding: 0 12px 12px;
     }
-    
-    button {
-      padding: 12px;
-      border: none;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-    
-    .btn-primary {
-      background: #1d9bf0;
-      color: white;
-    }
-    
-    .btn-primary:hover {
-      background: #1a8cd8;
-    }
-    
-    .btn-secondary {
+
+    .cat-row {
       background: white;
-      color: #0f1419;
-      border: 1px solid #cfd9de;
+      border-radius: 10px;
+      margin-bottom: 6px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
-    
-    .btn-secondary:hover {
+
+    .cat-row-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 14px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+    }
+
+    .cat-row-header:hover {
       background: #f7f9f9;
     }
-    
-    .info-text {
+
+    .cat-arrow {
+      font-size: 10px;
+      color: #9ca3af;
+      width: 10px;
+      flex-shrink: 0;
+    }
+
+    .cat-name {
+      font-size: 14px;
+      font-weight: 600;
+      flex: 1;
+    }
+
+    .cat-count {
       font-size: 13px;
       color: #536471;
-      line-height: 1.5;
-      margin-top: 16px;
-      padding: 12px;
-      background: white;
-      border-radius: 8px;
-      border-left: 3px solid #1d9bf0;
+      flex-shrink: 0;
     }
-    
-    #status {
-      text-align: center;
-      padding: 8px;
-      border-radius: 6px;
+
+    .cat-stale {
+      font-size: 11px;
+      font-weight: 600;
+      color: #b45309;
+      background: #fef3c7;
+      padding: 2px 7px;
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+
+    /* ── Account rows (inside expanded category) ── */
+    .cat-accounts {
+      display: none;
+      border-top: 1px solid #f3f4f6;
+    }
+
+    .cat-accounts.open {
+      display: block;
+    }
+
+    .account-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px 8px 32px;
+      border-bottom: 1px solid #f9fafb;
+      transition: background 0.1s;
+    }
+
+    .account-row:last-child {
+      border-bottom: none;
+    }
+
+    .account-row:hover {
+      background: #f7f9f9;
+    }
+
+    .account-link {
       font-size: 13px;
-      margin-top: 12px;
+      font-weight: 500;
+      color: #1d9bf0;
+      text-decoration: none;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .account-link:hover {
+      text-decoration: underline;
+    }
+
+    .account-meta {
+      font-size: 11px;
+      color: #9ca3af;
+      flex-shrink: 0;
+      width: 52px;
+      text-align: right;
+    }
+
+    .dwell-bar {
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+      width: 52px;
+      text-align: right;
+    }
+
+    .dwell-low  { color: #ef4444; }
+    .dwell-med  { color: #f59e0b; }
+    .dwell-high { color: #10b981; }
+
+    /* ── Empty / loading states ── */
+    .empty-state {
+      text-align: center;
+      padding: 32px 20px;
+      font-size: 13px;
+      color: #6b7280;
+      line-height: 1.6;
+      background: white;
+      border-radius: 10px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 24px;
+      font-size: 13px;
+      color: #9ca3af;
+    }
+
+    /* ── Data actions row ── */
+    .data-actions {
+      display: flex;
+      gap: 8px;
+      padding: 4px 12px 14px;
+    }
+
+    .btn-small {
+      flex: 1;
+      padding: 8px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: white;
+      font-size: 12px;
+      font-weight: 500;
+      color: #374151;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-small:hover {
+      background: #f3f4f6;
+    }
+
+    /* ── Status message ── */
+    #status {
+      margin: 0 12px 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
       display: none;
     }
-    
+
     #status.success {
       background: #d1fae5;
       color: #065f46;
       display: block;
     }
-    
+
     #status.error {
       background: #fee2e2;
       color: #991b1b;
       display: block;
     }
-    
-    #aiStatus {
-      text-align: center;
-      padding: 8px;
-      border-radius: 6px;
-      font-size: 13px;
-      margin-top: 12px;
-      display: none;
+
+    /* ── AI Settings tab ── */
+    .settings-body {
+      padding: 16px;
     }
-    
-    #aiStatus.success {
-      background: #d1fae5;
-      color: #065f46;
-      display: block;
+
+    h2 {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: #0f1419;
     }
-    
-    #aiStatus.error {
-      background: #fee2e2;
-      color: #991b1b;
-      display: block;
-    }
-    
-    /* AI Settings */
+
     .setting-section {
       background: white;
       padding: 16px;
       border-radius: 12px;
       margin-bottom: 12px;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
-    
+
     .setting-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 12px 0;
-      border-bottom: 1px solid #e5e7eb;
+      padding: 11px 0;
+      border-bottom: 1px solid #f3f4f6;
     }
-    
+
     .setting-row:last-child {
       border-bottom: none;
     }
-    
-    .setting-label {
-      flex: 1;
-    }
-    
+
     .setting-label strong {
       display: block;
-      font-size: 14px;
+      font-size: 13px;
       color: #0f1419;
-      margin-bottom: 4px;
+      margin-bottom: 2px;
     }
-    
+
     .setting-label span {
-      font-size: 12px;
+      font-size: 11px;
       color: #6b7280;
     }
-    
+
     .toggle-switch {
       position: relative;
       width: 44px;
       height: 24px;
+      flex-shrink: 0;
     }
-    
+
     .toggle-switch input {
       opacity: 0;
       width: 0;
       height: 0;
     }
-    
+
     .toggle-slider {
       position: absolute;
       cursor: pointer;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background-color: #d1d5db;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #d1d5db;
       transition: 0.3s;
       border-radius: 24px;
     }
-    
+
     .toggle-slider:before {
       position: absolute;
       content: "";
@@ -245,197 +324,204 @@
       width: 18px;
       left: 3px;
       bottom: 3px;
-      background-color: white;
+      background: white;
       transition: 0.3s;
       border-radius: 50%;
     }
-    
-    input:checked + .toggle-slider {
-      background-color: #10b981;
+
+    input:checked + .toggle-slider { background: #10b981; }
+    input:checked + .toggle-slider:before { transform: translateX(20px); }
+
+    .form-group {
+      margin-bottom: 12px;
     }
-    
-    input:checked + .toggle-slider:before {
-      transform: translateX(20px);
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 6px;
     }
-    
+
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
     .connection-status {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 12px;
+      padding: 5px 10px;
       border-radius: 16px;
       font-size: 12px;
       font-weight: 600;
       margin-top: 8px;
     }
-    
-    .connection-status.connected {
-      background: #d1fae5;
-      color: #065f46;
-    }
-    
-    .connection-status.disconnected {
-      background: #fee2e2;
-      color: #991b1b;
-    }
-    
-    .form-group {
-      margin-bottom: 12px;
-    }
-    
-    .form-group label {
-      display: block;
+
+    .connection-status.connected    { background: #d1fae5; color: #065f46; }
+    .connection-status.disconnected { background: #fee2e2; color: #991b1b; }
+
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
       font-size: 13px;
       font-weight: 600;
-      color: #374151;
-      margin-bottom: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
     }
-    
-    .form-group input,
-    .form-group select {
+
+    .btn-primary {
+      background: #1d9bf0;
+      color: white;
       width: 100%;
-      padding: 8px 12px;
-      border: 1px solid #d1d5db;
-      border-radius: 6px;
-      font-size: 14px;
     }
-    
+
+    .btn-primary:hover { background: #1a8cd8; }
+
     .btn-test {
       background: #3b82f6;
       color: white;
-      font-size: 13px;
-      padding: 8px 16px;
+      font-size: 12px;
+      padding: 7px 14px;
     }
-    
-    .btn-test:hover {
-      background: #2563eb;
+
+    .btn-test:hover { background: #2563eb; }
+
+    #aiStatus {
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      display: none;
     }
+
+    #aiStatus.success { background: #d1fae5; color: #065f46; display: block; }
+    #aiStatus.error   { background: #fee2e2; color: #991b1b; display: block; }
   </style>
 </head>
 <body>
+
   <div class="tabs">
-    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab active" data-tab="categories">Categories</button>
     <button class="tab" data-tab="ai-settings">AI Settings</button>
   </div>
-  
-  <!-- Overview Tab -->
-  <div class="tab-content active" id="overview">
-    <h1>X Account Tracker v2.0</h1>
-    
-    <div class="stats">
-      <div class="stat-card">
-        <div class="stat-value" id="totalAccounts">0</div>
-        <div class="stat-label">Tracked Accounts</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="recentlyUpdated">0</div>
-        <div class="stat-label">Updated Today</div>
-      </div>
+
+  <!-- Categories Tab -->
+  <div class="tab-content active" id="categories">
+    <div class="cat-header">
+      <span class="cat-title">Feed Categories</span>
+      <span class="cat-total" id="catTotal"></span>
     </div>
-    
-    <div class="actions">
-      <button class="btn-primary" id="viewAccounts">View All Accounts</button>
-      <button class="btn-secondary" id="exportData">Export Data</button>
-      <button class="btn-secondary" id="importData">Import Data</button>
+
+    <div id="categoryList">
+      <div class="loading">Loading...</div>
     </div>
-    
+
     <div id="status"></div>
-    
-    <div class="info-text">
-      💡 <strong>How to use:</strong> Visit X/Twitter and hover over any username to see the "+ Tag" button. AI will suggest sentiments if enabled!
+
+    <div class="data-actions">
+      <button class="btn-small" id="exportData">Export Data</button>
+      <button class="btn-small" id="importData">Import Data</button>
     </div>
   </div>
-  
+
   <!-- AI Settings Tab -->
   <div class="tab-content" id="ai-settings">
-    <h1>AI Settings</h1>
-    
-    <div class="setting-section">
-      <h2>Ollama Connection</h2>
-      
-      <div class="form-group">
-        <label>Ollama URL</label>
-        <input type="text" id="ollamaUrl" value="http://localhost:11434" placeholder="http://localhost:11434">
+    <div class="settings-body">
+      <div class="setting-section">
+        <h2>Ollama Connection</h2>
+
+        <div class="form-group">
+          <label>Ollama URL</label>
+          <input type="text" id="ollamaUrl" value="http://localhost:11434" placeholder="http://localhost:11434">
+        </div>
+
+        <div class="form-group">
+          <label>Model</label>
+          <select id="ollamaModel">
+            <option value="llama3.2:3b">Llama 3.2 (3B) - Fast</option>
+            <option value="llama3.1:8b">Llama 3.1 (8B) - Balanced</option>
+            <option value="mistral:7b">Mistral (7B) - Smart</option>
+          </select>
+        </div>
+
+        <button class="btn-test" id="testConnection">Test Connection</button>
+        <div id="connectionStatus"></div>
       </div>
-      
-      <div class="form-group">
-        <label>Model</label>
-        <select id="ollamaModel">
-          <option value="llama3.2:3b">Llama 3.2 (3B) - Fast</option>
-          <option value="llama3.1:8b">Llama 3.1 (8B) - Balanced</option>
-          <option value="mistral:7b">Mistral (7B) - Smart</option>
-        </select>
+
+      <div class="setting-section">
+        <h2>AI Features</h2>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <strong>Enable AI Analysis</strong>
+            <span>Master switch for all AI features</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="aiEnabled">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <strong>Content Analysis</strong>
+            <span>Analyze post content for sentiment</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="contentAnalysis">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <strong>Pattern Recognition</strong>
+            <span>Learn from your interactions</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="patternRecognition">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <strong>Topic Extraction</strong>
+            <span>Auto-detect topics from posts</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="topicExtraction">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <strong>Auto-Suggest Tags</strong>
+            <span>Get AI suggestions when tagging</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="autoSuggest">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
       </div>
-      
-      <button class="btn-test" id="testConnection">Test Connection</button>
-      <div id="connectionStatus"></div>
+
+      <button class="btn-primary" id="saveAISettings">Save Settings</button>
+      <div id="aiStatus"></div>
     </div>
-    
-    <div class="setting-section">
-      <h2>AI Features</h2>
-      
-      <div class="setting-row">
-        <div class="setting-label">
-          <strong>Enable AI Analysis</strong>
-          <span>Master switch for all AI features</span>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="aiEnabled">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      
-      <div class="setting-row">
-        <div class="setting-label">
-          <strong>Content Analysis</strong>
-          <span>Analyze post content for sentiment</span>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="contentAnalysis">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      
-      <div class="setting-row">
-        <div class="setting-label">
-          <strong>Pattern Recognition</strong>
-          <span>Learn from your interactions</span>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="patternRecognition">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      
-      <div class="setting-row">
-        <div class="setting-label">
-          <strong>Topic Extraction</strong>
-          <span>Auto-detect topics from posts</span>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="topicExtraction">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      
-      <div class="setting-row">
-        <div class="setting-label">
-          <strong>Auto-Suggest Tags</strong>
-          <span>Get AI suggestions when tagging</span>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="autoSuggest">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-    </div>
-    
-    <button class="btn-primary" id="saveAISettings">Save Settings</button>
-    <div id="aiStatus"></div>
   </div>
-  
+
   <input type="file" id="fileInput" accept=".json" style="display: none;">
-  
+
   <script src="popup.js"></script>
 </body>
 </html>

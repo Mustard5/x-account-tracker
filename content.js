@@ -1569,6 +1569,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'getAccountProfiles') {
+    const tx = db.transaction(['accountProfiles'], 'readonly');
+    const req = tx.objectStore('accountProfiles').getAll();
+    req.onsuccess = () => sendResponse({ profiles: req.result || [] });
+    req.onerror = () => sendResponse({ profiles: [] });
+    return true;
+  }
+
   if (request.action === 'reloadAIConfig') {
     loadAIConfig().then(() => {
       sendResponse({ success: true, config: aiConfig });
