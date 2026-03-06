@@ -8,6 +8,7 @@ let db = null;
 const signalQueue = [];
 const BATCH_THRESHOLD = 20;
 const BATCH_FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_DWELL_MS = 30000; // cap dwell at 30s to avoid AFK skew
 const dwellTracker = new WeakMap(); // article element -> entry timestamp
 
 // Sprint 2: Batch categorization
@@ -578,7 +579,7 @@ const viewportObserver = new IntersectionObserver((entries) => {
     } else {
       const entryTime = dwellTracker.get(article);
       if (entryTime) {
-        const dwellTime = Date.now() - entryTime;
+        const dwellTime = Math.min(Date.now() - entryTime, MAX_DWELL_MS);
         const username = extractUsername(article);
         if (username) {
           const postText = extractPostText(article);

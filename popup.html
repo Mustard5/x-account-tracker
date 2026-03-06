@@ -353,6 +353,32 @@
       font-size: 13px;
     }
 
+    .model-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .model-row select {
+      flex: 1;
+      width: auto;
+    }
+
+    .btn-refresh {
+      flex-shrink: 0;
+      padding: 7px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: white;
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+      color: #374151;
+      transition: background 0.15s;
+    }
+
+    .btn-refresh:hover { background: #f3f4f6; }
+
     .connection-status {
       display: inline-flex;
       align-items: center;
@@ -445,11 +471,12 @@
 
         <div class="form-group">
           <label>Model</label>
-          <select id="ollamaModel">
-            <option value="llama3.2:3b">Llama 3.2 (3B) - Fast</option>
-            <option value="llama3.1:8b">Llama 3.1 (8B) - Balanced</option>
-            <option value="mistral:7b">Mistral (7B) - Smart</option>
-          </select>
+          <div class="model-row">
+            <select id="ollamaModel">
+              <option value="" disabled selected>Loading models…</option>
+            </select>
+            <button class="btn-refresh" id="refreshModels" title="Refresh model list">&#8635;</button>
+          </div>
         </div>
 
         <button class="btn-test" id="testConnection">Test Connection</button>

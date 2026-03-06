@@ -183,6 +183,50 @@ function buildAccountRow(account) {
 
 // ── AI Settings tab ────────────────────────────────────────────────────────
 
+async function fetchAndPopulateModels(currentModel) {
+  const select   = document.getElementById('ollamaModel');
+  const ollamaUrl = document.getElementById('ollamaUrl')?.value || 'http://localhost:11434';
+
+  select.innerHTML = '<option value="" disabled selected>Loading…</option>';
+
+  try {
+    const controller = new AbortController();
+    const timeoutId  = setTimeout(() => controller.abort(), 5000);
+    const response   = await fetch(`${ollamaUrl}/api/tags`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) throw new Error('Bad response');
+
+    const data   = await response.json();
+    const models = data.models || [];
+
+    if (models.length === 0) {
+      select.innerHTML = '<option value="" disabled selected>No models found</option>';
+      return;
+    }
+
+    select.innerHTML = '';
+    for (const m of models) {
+      const opt   = document.createElement('option');
+      opt.value   = m.name;
+      opt.textContent = m.name;
+      if (m.name === currentModel) opt.selected = true;
+      select.appendChild(opt);
+    }
+
+    // If saved model isn't in list, prepend it as a fallback option
+    if (currentModel && !models.some(m => m.name === currentModel)) {
+      const opt   = document.createElement('option');
+      opt.value   = currentModel;
+      opt.textContent = `${currentModel} (not installed)`;
+      opt.selected = true;
+      select.insertBefore(opt, select.firstChild);
+    }
+  } catch {
+    select.innerHTML = '<option value="" disabled selected>Couldn\'t connect to Ollama</option>';
+  }
+}
+
 async function loadAISettings() {
   chrome.storage.local.get(['aiConfig'], result => {
     const config = result.aiConfig || {
@@ -196,9 +240,9 @@ async function loadAISettings() {
 
     document.getElementById('aiEnabled').checked          = config.enabled;
     document.getElementById('ollamaUrl').value            = config.ollamaUrl;
-    document.getElementById('ollamaModel').value          = config.model;
     document.getElementById('patternRecognition').checked = config.features.patternRecognition;
 
+    fetchAndPopulateModels(config.model);
     testConnectionStatus();
   });
 }
@@ -241,6 +285,11 @@ async function testConnectionStatus() {
 }
 
 document.getElementById('testConnection')?.addEventListener('click', testConnectionStatus);
+
+document.getElementById('refreshModels')?.addEventListener('click', () => {
+  const currentModel = document.getElementById('ollamaModel')?.value;
+  fetchAndPopulateModels(currentModel);
+});
 
 document.getElementById('saveAISettings')?.addEventListener('click', () => {
   const config = {
