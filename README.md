@@ -1,168 +1,182 @@
+# X Account Tracker
 
-# X Account Tracker – AI Enhanced
+A browser extension that helps you understand and manage your X (Twitter) feed by passively categorizing the accounts you follow.
 
-A browser extension that helps you track and organize your opinions about X (formerly Twitter) accounts, featuring AI-powered sentiment analysis using a local Ollama server.
+## The Problem
 
-## Features
+X's follow system is **binary and permanent** — you either follow someone or you don't. But your interests are **dynamic and temporal**.
 
-- **Account Tracking:** Tag and categorize X/Twitter accounts with custom sentiments.
-- **AI-Powered Analysis:** Get intelligent sentiment/tag suggestions using local LLM inference.
-- **Content Analysis:** Analyze posts for sentiment and detect topics automatically.
-- **Pattern Recognition:** Learns from your interaction history for improved suggestions.
-- **Topic Extraction:** Spots subjects commonly discussed by accounts.
-- **Privacy-First:** All AI processing is strictly local; no third-party APIs or data leaks.
-- **Data Management:** Export and import your tracking data.
+The pattern:
+1. A topic gets hot (politics, crypto, AI, a news event)
+2. You discover and follow accounts covering that topic
+3. The topic cools or your interests shift
+4. Those accounts remain in your feed, generating noise
+5. Your follow list becomes a graveyard of stale interests
 
-## Supported Platforms and Limitations
+X provides no way to see your follows grouped by topic, no staleness detection, and no bulk management by category.
 
-⚠️ **Current Limitations:**
-- The extension’s AI features are fully verified only on **PopOS! (Linux) with Brave browser**.
-- Chrome or other Chromium browsers with Manifest V3 may work, but are not officially supported yet.
-- **Firefox is NOT supported** due to CORS incompatibilities and Manifest V3 limitations.
-- Your Ollama server **must be installed locally** and properly configured to allow CORS requests from your browser/environment—see instructions below for Linux/systemd.
-- Expect issues on other platforms or browsers until further development or community testing broadens support.
+## The Solution
 
-## Prerequisites
+This extension observes your feed passively as you browse and builds a picture of who you follow and what they talk about. No behavior change required — just scroll normally.
 
-1. **Clone this Repository:**
+### How It Works
+
+1. **Passive Observation** — As posts scroll past, the extension silently collects signals: who posted, what they said, how long you dwelled on it
+2. **Batch Categorization** — Periodically, accumulated posts are sent to your local Ollama instance for topic categorization
+3. **Dashboard View** — Open the extension popup to see your feed composition broken down by category with engagement indicators
+
+### Categories
+
+Accounts are automatically sorted into:
+- Technology
+- AI/ML
+- Politics
+- Faith/Spirituality
+- Finance/Crypto
+- Sports
+- Entertainment
+- Science
+- News/Media
+- Personal/Lifestyle
+- Other
+
+### Engagement Indicators
+
+The extension tracks **dwell time** — how long each post was visible in your viewport before you scrolled past. This behavioral signal reveals actual engagement independent of content:
+
+| Dwell Time | Indicator | Meaning |
+|------------|-----------|---------|
+| < 1 second | 🔴 Low | You scroll past quickly |
+| 1-4 seconds | 🟡 Medium | You glance at it |
+| > 4 seconds | 🟢 High | You actually read it |
+
+Categories dominated by low-engagement accounts are flagged — these are your stale follows.
+
+## Privacy Architecture
+
+- **100% local processing** — No data leaves your browser
+- **No X API dependency** — Reads DOM content only, no OAuth required
+- **No external servers** — Categorization runs on your local Ollama instance
+- **No tracking or analytics** — We don't know you exist
+
+## Requirements
+
+### Browser
+- Brave (verified)
+- Chrome/Chromium (should work, not officially tested)
+- Firefox is **not supported** (Manifest V3 limitations)
+
+### Ollama (for AI categorization)
+The extension works without Ollama — it will collect signals and track dwell time, but won't categorize accounts by topic.
+
+For full functionality:
+1. Install [Ollama](https://ollama.ai)
+2. Pull a model: `ollama pull llama3.2`
+3. Configure CORS (see below)
+
+## Installation
+
+1. Clone or download this repository:
    ```bash
-   git clone https://github.com/Mustard5x/x-account-tracker.git
-   cd x-account-tracker
+   git clone https://github.com/Mustard5/x-account-tracker.git
    ```
-2. **Install & Configure the Extension:**
-   - For Brave/Chromium:
-     - Go to `chrome://extensions`
-     - Enable "Developer mode"
-     - Click "Load unpacked" and select this directory
-   - **Firefox is currently NOT supported**
-3. **Set Up Ollama (for AI features):**
-   - Install Ollama locally
-   - Pull a recommended model, e.g.:
-     ```bash
-     ollama pull llama3:23b
-     ```
-   - Follow environment variable setup below to enable CORS if you want to use AI features.
 
-## Vital Step: Configure Ollama for Browser CORS (PopOS! Example)
+2. Load in your browser:
+   - Go to `chrome://extensions` or `brave://extensions`
+   - Enable "Developer mode"
+   - Click "Load unpacked"
+   - Select the repository folder
 
-To let your local extension communicate with the Ollama API (which is necessary for sentiment AI analysis), you MUST allow CORS requests by adding the appropriate environment variable to your Ollama server configuration.
+3. Browse X normally — the extension activates automatically on x.com
 
-**For Linux (PopOS!) with Ollama installed as a systemd service:**
+## Configuring Ollama for CORS
 
-1. **Find Your Extension ID (Important for Security):**
-   - Go to `chrome://extensions` (or `brave://extensions`)
-   - Find "X Account Tracker - AI Enhanced"
-   - Copy the extension ID (looks like: `abcdefghijklmnopqrstuvwxyz123456`)
+The extension needs to communicate with Ollama running on localhost. You must configure CORS to allow this.
 
-2. **Create or Edit the Service Override:**
+### Linux (systemd)
+
+1. Get your extension ID from `chrome://extensions`
+
+2. Create a service override:
    ```bash
    sudo systemctl edit ollama
    ```
 
-3. **Add CORS Allow Environment Variable (Secure Method)**
-
-   **RECOMMENDED - Specific Origins (Most Secure):**
-   ```
+3. Add (replace YOUR_EXTENSION_ID):
+   ```ini
    [Service]
-   Environment="OLLAMA_ORIGINS=chrome-extension://YOUR_EXTENSION_ID_HERE,https://x.com"
-   ```
-   Replace `YOUR_EXTENSION_ID_HERE` with your actual extension ID from step 1.
-
-   **ALTERNATIVE - Localhost Only (Less Secure):**
-   ```
-   [Service]
-   Environment="OLLAMA_ORIGINS=http://localhost:*,https://x.com"
+   Environment="OLLAMA_ORIGINS=chrome-extension://YOUR_EXTENSION_ID"
    ```
 
-   **NOT RECOMMENDED - Wildcard (Least Secure):**
-   ```
-   [Service]
-   Environment="OLLAMA_ORIGINS=*"
-   ```
-   ⚠️ Using wildcard `*` allows ANY website to access your local Ollama server. Only use this for testing, never in production.
-
-   Save and exit the editor.
-
-4. **Reload and Restart Ollama:**
+4. Reload and restart:
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl restart ollama
    ```
 
-5. **Verify the Configuration:**
-   - Check the override file:
-     ```bash
-     cat /etc/systemd/system/ollama.service.d/override.conf
-     ```
-     You should see the `[Service] Environment="OLLAMA_ORIGINS=..."` line with your specific origins.
-   - Restart Ollama and check log output:
-     ```bash
-     sudo journalctl -u ollama -n 20 --no-pager
-     ```
-     Look for mention of `OLLAMA_ORIGINS` to confirm it was picked up.
+### macOS
 
-6. **Test CORS Header:**
-   ```bash
-   curl -H "Origin: https://x.com" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: Content-Type" -X OPTIONS http://localhost:11434/api/tags -v
-   ```
-   Should return `Access-Control-Allow-Origin` header matching your configured origin.
+Add to your shell profile (~/.zshrc or ~/.bashrc):
+```bash
+export OLLAMA_ORIGINS="chrome-extension://YOUR_EXTENSION_ID"
+```
 
-   If the header is missing, double-check the steps above or consult systemd documentation. If still unresolved, you may need to edit the main service file directly and add the Environment line under `[Service]` before restarting.
+Then restart Ollama.
 
-**Security Note:** Always use the most restrictive CORS policy possible. Specifying exact origins prevents unauthorized websites from accessing your local AI server.
+### Windows
+
+Set environment variable `OLLAMA_ORIGINS` to `chrome-extension://YOUR_EXTENSION_ID` in System Properties → Environment Variables, then restart Ollama.
 
 ## Usage
 
-- **Tag Accounts:** Hover on X profiles to tag or add notes.
-- **Set Sentiments:** Choose from "agree", "disagree", "mixed", etc.
-- **Enable AI (Advanced settings):** Go to the extension popup, set Ollama URL (default: `http://localhost:11434`), choose a model, and toggle on AI features.
-- **Export/Import Data:** Save or restore your tracking database as JSON.
+1. **Enable AI** — Open the extension popup, go to AI Settings, toggle on "Enable AI Analysis"
+2. **Set Ollama URL** — Default is `http://localhost:11434`
+3. **Select Model** — Choose from your installed Ollama models
+4. **Browse X** — Scroll through your feed normally
+5. **Check Dashboard** — Open the extension popup to see your feed composition
 
-## Project Roadmap
+The extension processes signals in batches during browser idle time, so categorization happens in the background without impacting your browsing.
 
-- Broader browser/platform support.
-- Advanced filtering and visualization tools.
-- Support for additional models and external APIs (subject to privacy).
-- Community testing and feedback needed especially for other OS/browser combinations.
+## What You'll See
 
-## Security & Privacy
+After browsing for a while, your dashboard might show:
 
-- All data is stored locally—no tracking, analytics, or account registration.
-- All user inputs are sanitized to prevent XSS attacks and code injection.
-- Input validation ensures only safe data is stored in the local database.
-- You must configure Ollama server security if making it accessible on your LAN or beyond localhost. By default, this extension assumes **localhost-only** for maximum safety.
-- CORS configuration should use specific origins (not wildcards) to prevent unauthorized access to your local AI server.
-- Imported data is validated and sanitized before being added to your database.
+```
+Feed Categories                    47 accounts observed
 
-## Disclaimer
+▶ Politics           23 accounts   ⚠ low engagement
+▶ AI/ML              12 accounts
+▶ Finance/Crypto      6 accounts
+▶ Technology          4 accounts
+▶ Entertainment       2 accounts
+```
 
-This extension is not affiliated with or endorsed by X Corp (formerly Twitter, Inc). **CORS and AI features currently verified only on PopOS! + Brave.** Use on other platforms at your own risk—contributions to expand support are welcome!
+Click a category to expand and see individual accounts with their engagement levels. The ⚠ warning indicates categories where you consistently scroll past quickly — these are candidates for unfollowing.
 
-***
+## Roadmap
 
-Contributors and testers: Please help expand official support by submitting bugs and documentation for running configurations on other operating systems and browsers. See CONTRIBUTING.md for details.
+- [x] Sprint 1: Passive feed observation with dwell time tracking
+- [x] Sprint 2: Ollama batch categorization
+- [x] Sprint 3: Category management dashboard
+- [ ] Sprint 4: Unfollow queue with rate limiting
+- [ ] Sprint 5: Export/import category data
 
-[1](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/30798160/1d68619e-a323-48dd-9c1e-e811a78a9fd0/README.md)
-[2](https://objectgraph.com/blog/ollama-cors/)
-[3](https://singlequote.blog/cors-challenges-with-local-ollama-installations/)
-[4](https://github.com/ollama/ollama/issues/13001)
-[5](https://lobehub.com/docs/usage/providers/ollama)
-[6](https://micz.it/thunderbird-addon-thunderai/ollama-cors-information/)
-[7](https://translucentcomputing.github.io/kubert-assistant-lite/ollama.html)
-[8](https://github.com/ollama/ollama/issues/2308)
-[9](https://www.linkedin.com/posts/durgaprasad-budhwani_how-to-handle-cors-settings-in-ollama-a-activity-7177995418989969408-Lt4f)
-[10](https://github.com/ollama/ollama/issues/6389)
-[11](https://www.reddit.com/r/ollama/comments/1lkp8bu/anyone_using_ollama_with_browser_plugins_we_built/)
-[12](https://apidog.com/blog/how-to-use-ollama/)
-[13](https://github.com/ollama/ollama/issues/2941)
-[14](https://ollama.readthedocs.io/en/faq/)
-[15](https://hostkey.com/documentation/technical/gpu/ollama/)
-[16](https://docs.ollama.com/faq)
-[17](https://itsfoss.com/brave-web-browser/)
-[18](https://github.com/ollama/ollama/issues/300)
-[19](https://www.youtube.com/watch?v=9QvQvQOVdt8)
-[20](https://community.brave.app/t/feature-request-custom-context-length/567509)
-[21](https://atlassc.net/2025/01/15/configuring-your-ollama-server)
+## Technical Notes
+
+- **Manifest V3** — Uses modern Chrome extension APIs
+- **IndexedDB Storage** — All data persists locally in browser storage
+- **IntersectionObserver** — Efficient viewport-based dwell time tracking
+- **requestIdleCallback** — AI processing scheduled during browser idle time
+- **WeakMap** — No memory leaks as X recycles DOM elements
+
+## Contributing
+
+This project is in active development. Issues and PRs welcome.
+
+## License
+
+MIT
+
 ---
 
-**Note**: This extension is not affiliated with or endorsed by X Corp (formerly Twitter, Inc.)
+**Note:** This extension is not affiliated with or endorsed by X Corp.
