@@ -191,74 +191,76 @@ async function loadAIConfig() {
   });
 }
 
-// Test Ollama connection
+// Test Ollama connection (delegated to background.js to avoid CORS)
 async function testOllamaConnection() {
-  try {
-    const response = await fetch(`${aiConfig.ollamaUrl}/api/tags`);
-    if (response.ok) {
-      const data = await response.json();
-      return { success: true, models: data.models };
-    }
-    return { success: false, error: 'Ollama not responding' };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { action: 'ollamaTest', ollamaUrl: aiConfig.ollamaUrl },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response);
+        }
+      }
+    );
+  });
 }
 
-// Call Ollama API for text analysis
+// Call Ollama API for text analysis (delegated to background.js to avoid CORS)
 async function analyzeWithOllama(prompt, systemPrompt = '', numPredict = 200) {
   if (!aiConfig.enabled) {
     console.log('❌ AI disabled in settings');
     return null;
   }
-  
-  try {
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🤖 OLLAMA REQUEST');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('Model:', aiConfig.model);
-    console.log('URL:', aiConfig.ollamaUrl);
-    if (systemPrompt) {
-      console.log('System Prompt:', systemPrompt);
-    }
-    console.log('User Prompt:', prompt);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    
-    const messages = [];
-    if (systemPrompt) {
-      messages.push({ role: 'system', content: systemPrompt });
-    }
-    messages.push({ role: 'user', content: prompt });
-    
-    const startTime = Date.now();
-    const response = await fetch(`${aiConfig.ollamaUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: aiConfig.model,
-        messages: messages,
-        stream: false,
-        options: {
-          temperature: 0.3,
-          num_predict: numPredict
-        }
-      })
-    });
-    
-    if (!response.ok) throw new Error('Ollama request failed');
-    
-    const data = await response.json();
-    const elapsed = Date.now() - startTime;
-    
-    console.log('✅ OLLAMA RESPONSE (' + (elapsed/1000).toFixed(2) + 's)');
-    console.log('Raw Response:', data.message.content);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    
-    return data.message.content;
-  } catch (error) {
-    console.error('❌ Ollama analysis failed:', error);
-    return null;
+
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🤖 OLLAMA REQUEST');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('Model:', aiConfig.model);
+  console.log('URL:', aiConfig.ollamaUrl);
+  if (systemPrompt) {
+    console.log('System Prompt:', systemPrompt);
   }
+  console.log('User Prompt:', prompt);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  const messages = [];
+  if (systemPrompt) {
+    messages.push({ role: 'system', content: systemPrompt });
+  }
+  messages.push({ role: 'user', content: prompt });
+
+  const startTime = Date.now();
+
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      {
+        action: 'ollamaAnalyze',
+        ollamaUrl: aiConfig.ollamaUrl,
+        model: aiConfig.model,
+        messages,
+        numPredict
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('❌ Ollama analysis failed (runtime error):', chrome.runtime.lastError.message);
+          resolve(null);
+          return;
+        }
+        if (response && response.error) {
+          console.error('❌ Ollama analysis failed:', response.error);
+          resolve(null);
+          return;
+        }
+        const elapsed = Date.now() - startTime;
+        console.log('✅ OLLAMA RESPONSE (' + (elapsed / 1000).toFixed(2) + 's)');
+        console.log('Raw Response:', response.content);
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        resolve(response.content);
+      }
+    );
+  });
 }
 
 // Extract post text from tweet elements

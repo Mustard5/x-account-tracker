@@ -3,6 +3,9 @@
   "name": "X Account Tracker - AI Enhanced",
   "version": "2.0.0",
   "description": "Track opinions about X accounts with AI-powered sentiment analysis via local Ollama",
+  "background": {
+    "service_worker": "background.js"
+  },
   "permissions": [
     "storage",
     "activeTab"
