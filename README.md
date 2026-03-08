@@ -113,6 +113,10 @@ The extension needs to communicate with Ollama running on localhost. You must co
    sudo systemctl daemon-reload
    sudo systemctl restart ollama
    ```
+### Important: Extension ID Changes
+
+When you load an unpacked extension, the browser assigns a temporary ID. This ID **changes** if you remove and re-add the extension.
+Always verify your current ID at `chrome://extensions` or `brave://extensions` matches what's in your Ollama configuration.
 
 ### macOS
 
