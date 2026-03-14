@@ -42,15 +42,18 @@ Accounts are automatically sorted into:
 
 ### Engagement Indicators
 
-The extension tracks **dwell time** — how long each post was visible in your viewport before you scrolled past. This behavioral signal reveals actual engagement independent of content:
+The extension computes a combined **engagement score** per account from two signals:
 
-| Dwell Time | Indicator | Meaning |
-|------------|-----------|---------|
-| < 1 second | 🔴 Low | You scroll past quickly |
-| 1-4 seconds | 🟡 Medium | You glance at it |
-| > 4 seconds | 🟢 High | You actually read it |
+- **Dwell time** — how long each post was visible in your viewport before you scrolled past
+- **Interactions** — likes and retweets you make while browsing
 
-Categories dominated by low-engagement accounts are flagged — these are your stale follows.
+| Score | Indicator | Meaning |
+|-------|-----------|---------|
+| < -0.5 | 🔴 Low | You consistently scroll past |
+| -0.5 to +0.5 | 🟡 Medium | You occasionally engage |
+| > +0.5 | 🟢 High | You actively engage |
+
+Accounts with a low score over 10+ observations, or not seen in 30+ days, are flagged as stale.
 
 ## Privacy Architecture
 
@@ -95,41 +98,30 @@ The extension needs to communicate with Ollama running on localhost. You must co
 
 ### Linux (systemd)
 
-1. Get your extension ID from `chrome://extensions`
-
-2. Create a service override:
-   ```bash
-   sudo systemctl edit ollama
-   ```
-
-3. Add (replace YOUR_EXTENSION_ID):
-   ```ini
-   [Service]
-   Environment="OLLAMA_ORIGINS=chrome-extension://YOUR_EXTENSION_ID"
-   ```
-
-4. Reload and restart:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl restart ollama
-   ```
-### Important: Extension ID Changes
-
-When you load an unpacked extension, the browser assigns a temporary ID. This ID **changes** if you remove and re-add the extension.
-Always verify your current ID at `chrome://extensions` or `brave://extensions` matches what's in your Ollama configuration.
+```bash
+sudo mkdir -p /etc/systemd/system/ollama.service.d
+sudo tee /etc/systemd/system/ollama.service.d/override.conf << 'EOF'
+[Service]
+Environment="OLLAMA_ORIGINS=*"
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
 
 ### macOS
 
-Add to your shell profile (~/.zshrc or ~/.bashrc):
+Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 ```bash
-export OLLAMA_ORIGINS="chrome-extension://YOUR_EXTENSION_ID"
+export OLLAMA_ORIGINS="*"
 ```
 
 Then restart Ollama.
 
 ### Windows
 
-Set environment variable `OLLAMA_ORIGINS` to `chrome-extension://YOUR_EXTENSION_ID` in System Properties → Environment Variables, then restart Ollama.
+Set environment variable `OLLAMA_ORIGINS` to `*` in System Properties → Environment Variables, then restart Ollama.
+
+> **Why `*` instead of a specific extension ID?** Unpacked extensions get a new `chrome-extension://` ID every time they are reloaded during development. A hardcoded ID will silently break POST requests (GET requests like `/api/tags` may still succeed, making this hard to diagnose). Since Ollama only listens on localhost, the wildcard has no security impact.
 
 ## Usage
 
@@ -179,8 +171,8 @@ Click a category to expand and see individual accounts with their engagement lev
 - [x] Sprint 1: Passive feed observation with dwell time tracking
 - [x] Sprint 2: Ollama batch categorization
 - [x] Sprint 3: Category management dashboard
-- [ ] Sprint 4: Unfollow queue with rate limiting
-- [ ] Sprint 5: Export/import category data
+- [x] Sprint 4: Engagement scoring, staleness detection, sort/filter controls
+- [ ] Sprint 5: Unfollow queue with human-like pacing and confirmation step
 
 ## Technical Notes
 
