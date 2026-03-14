@@ -42,8 +42,8 @@ function relativeTime(isoString) {
 }
 
 function dwellLevel(avgDwell) {
-  if (avgDwell < 1000) return 'low';
-  if (avgDwell < 4000) return 'med';
+  if (avgDwell < 2000) return 'low';
+  if (avgDwell < 8000) return 'med';
   return 'high';
 }
 
@@ -62,13 +62,72 @@ function getActiveXTab(callback) {
   });
 }
 
+// ── Engagement score helpers ────────────────────────────────────────────────
+
+function scoreIndicator(score) {
+  if (score === null || score === undefined) {
+    return { emoji: '', label: 'Not enough data', cls: 'score-none' };
+  }
+  const formatted = (score >= 0 ? '+' : '') + score.toFixed(1);
+  if (score < -0.5) return { emoji: '🔴', label: formatted, cls: 'score-low' };
+  if (score <= 0.5)  return { emoji: '🟡', label: formatted, cls: 'score-med' };
+  return { emoji: '🟢', label: formatted, cls: 'score-high' };
+}
+
+function categoryAvgScore(accounts) {
+  const scored = accounts.filter(a => a.engagementScore !== null && a.engagementScore !== undefined);
+  if (scored.length === 0) return null;
+  const avg = scored.reduce((sum, a) => sum + a.engagementScore, 0) / scored.length;
+  return parseFloat(avg.toFixed(2));
+}
+
+// ── Sort / filter state ─────────────────────────────────────────────────────
+
+let currentSort   = 'lastSeen';  // 'lastSeen' | 'engagementScore' | 'likeCount'
+let currentFilter = 'all';       // 'all' | 'staleOnly' | 'hideStale'
+
 // ── Categories tab ─────────────────────────────────────────────────────────
+
+function renderProfiles(profiles) {
+  const listEl  = document.getElementById('categoryList');
+  const totalEl = document.getElementById('catTotal');
+
+  // Apply filter
+  let filtered = profiles;
+  if (currentFilter === 'staleOnly') {
+    filtered = profiles.filter(p => p.isStale);
+  } else if (currentFilter === 'hideStale') {
+    filtered = profiles.filter(p => !p.isStale);
+  }
+
+  totalEl.textContent = `${filtered.length} account${filtered.length !== 1 ? 's' : ''} observed`;
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div class="empty-state">No accounts match the current filter.</div>';
+    return;
+  }
+
+  // Group by category
+  const grouped = {};
+  for (const profile of filtered) {
+    const cat = profile.category || 'Other';
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(profile);
+  }
+
+  // Sort categories by account count descending
+  const sorted = Object.entries(grouped).sort((a, b) => b[1].length - a[1].length);
+
+  listEl.innerHTML = '';
+  for (const [category, accounts] of sorted) {
+    listEl.appendChild(buildCategoryRow(category, accounts));
+  }
+}
 
 function loadCategories() {
   const listEl  = document.getElementById('categoryList');
-  const totalEl = document.getElementById('catTotal');
   listEl.innerHTML = '<div class="loading">Loading...</div>';
-  totalEl.textContent = '';
+  document.getElementById('catTotal').textContent = '';
 
   getActiveXTab(tab => {
     if (!tab) {
@@ -85,36 +144,35 @@ function loadCategories() {
       const profiles = response.profiles || [];
 
       if (profiles.length === 0) {
-        totalEl.textContent = '0 accounts observed';
+        document.getElementById('catTotal').textContent = '0 accounts observed';
         listEl.innerHTML = '<div class="empty-state">No data yet.<br>Browse X normally — categories appear after the first Ollama batch runs (every 20 posts scrolled).</div>';
         return;
       }
 
-      totalEl.textContent = `${profiles.length} account${profiles.length !== 1 ? 's' : ''} observed`;
-
-      // Group by category
-      const grouped = {};
-      for (const profile of profiles) {
-        const cat = profile.category || 'Other';
-        if (!grouped[cat]) grouped[cat] = [];
-        grouped[cat].push(profile);
-      }
-
-      // Sort categories by account count descending
-      const sorted = Object.entries(grouped).sort((a, b) => b[1].length - a[1].length);
-
-      listEl.innerHTML = '';
-      for (const [category, accounts] of sorted) {
-        listEl.appendChild(buildCategoryRow(category, accounts));
-      }
+      renderProfiles(profiles);
     });
   });
 }
 
 function buildCategoryRow(category, accounts) {
-  // Staleness: >50% of accounts have low dwell
-  const lowCount = accounts.filter(a => dwellLevel(a.avgDwell) === 'low').length;
-  const isStale  = lowCount > accounts.length / 2;
+  const avgScore = categoryAvgScore(accounts);
+
+  // Category badge: prefer stored scores, fall back to legacy dwell check
+  let badgeHtml = '';
+  if (avgScore !== null) {
+    const formatted = (avgScore >= 0 ? '+' : '') + avgScore.toFixed(1);
+    if (avgScore < -0.3) {
+      badgeHtml = `<span class="cat-stale">⚠️ low engagement (avg: ${formatted})</span>`;
+    } else if (avgScore > 0.5) {
+      badgeHtml = `<span class="cat-engaged">🟢 high engagement (avg: ${formatted})</span>`;
+    }
+  } else {
+    // Fallback: legacy dwell-based check until scores are computed
+    const lowCount = accounts.filter(a => dwellLevel(a.avgDwell) === 'low').length;
+    if (lowCount > accounts.length / 2) {
+      badgeHtml = '<span class="cat-stale">low engagement</span>';
+    }
+  }
 
   const row = document.createElement('div');
   row.className = 'cat-row';
@@ -125,17 +183,28 @@ function buildCategoryRow(category, accounts) {
     <span class="cat-arrow">&#9658;</span>
     <span class="cat-name">${category}</span>
     <span class="cat-count">${accounts.length} account${accounts.length !== 1 ? 's' : ''}</span>
-    ${isStale ? '<span class="cat-stale">low engagement</span>' : ''}
+    ${badgeHtml}
   `;
 
   // Account list, hidden by default
   const accountList = document.createElement('div');
   accountList.className = 'cat-accounts';
 
-  // Sort accounts by lastSeen descending (most recent first)
-  const sortedAccounts = [...accounts].sort(
-    (a, b) => new Date(b.lastSeen) - new Date(a.lastSeen)
-  );
+  // Sort accounts per current sort selection
+  const sortedAccounts = [...accounts].sort((a, b) => {
+    if (currentSort === 'engagementScore') {
+      // null scores go to the bottom
+      if (a.engagementScore === null && b.engagementScore === null) return 0;
+      if (a.engagementScore === null) return 1;
+      if (b.engagementScore === null) return -1;
+      return b.engagementScore - a.engagementScore;
+    }
+    if (currentSort === 'likeCount') {
+      return (b.likeCount || 0) - (a.likeCount || 0);
+    }
+    // Default: lastSeen descending
+    return new Date(b.lastSeen) - new Date(a.lastSeen);
+  });
   for (const account of sortedAccounts) {
     accountList.appendChild(buildAccountRow(account));
   }
@@ -152,14 +221,13 @@ function buildCategoryRow(category, accounts) {
 }
 
 function buildAccountRow(account) {
-  const { username, avgDwell, lastSeen } = account;
-  const level = dwellLevel(avgDwell);
-  const barChar = { low: '▂', med: '▅', high: '█' }[level];
+  const { username, lastSeen, engagementScore, likeCount, isStale, staleReason } = account;
+  const ind = scoreIndicator(engagementScore);
 
   const row = document.createElement('div');
   row.className = 'account-row';
 
-  // Build safely — no innerHTML with user data
+  // @username link — built safely without innerHTML
   const link = document.createElement('a');
   link.className = 'account-link';
   link.href = `https://x.com/${encodeURIComponent(username)}`;
@@ -171,13 +239,26 @@ function buildAccountRow(account) {
   meta.className = 'account-meta';
   meta.textContent = relativeTime(lastSeen);
 
-  const dwell = document.createElement('span');
-  dwell.className = `dwell-bar dwell-${level}`;
-  dwell.textContent = `${barChar} ${level}`;
+  const score = document.createElement('span');
+  score.className = `account-score ${ind.cls}`;
+  score.textContent = ind.emoji ? `${ind.emoji} ${ind.label}` : ind.label;
+
+  const likes = document.createElement('span');
+  likes.className = 'account-likes';
+  likes.textContent = likeCount ? `${likeCount} ♥` : '';
 
   row.appendChild(link);
   row.appendChild(meta);
-  row.appendChild(dwell);
+  row.appendChild(score);
+  row.appendChild(likes);
+
+  if (isStale) {
+    const stale = document.createElement('span');
+    stale.className = 'account-stale';
+    stale.textContent = staleReason === 'not_seen' ? '👻 ghost' : '⚠️ stale';
+    row.appendChild(stale);
+  }
+
   return row;
 }
 
@@ -424,3 +505,13 @@ document.getElementById('fileInput')?.addEventListener('change', e => {
 // ── Initial load ───────────────────────────────────────────────────────────
 
 loadCategories();
+
+document.getElementById('catSort')?.addEventListener('change', e => {
+  currentSort = e.target.value;
+  loadCategories();
+});
+
+document.getElementById('catFilter')?.addEventListener('change', e => {
+  currentFilter = e.target.value;
+  loadCategories();
+});

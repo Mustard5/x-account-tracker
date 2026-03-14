@@ -188,6 +188,66 @@
     .dwell-med  { color: #f59e0b; }
     .dwell-high { color: #10b981; }
 
+    /* ── Category engaged badge ── */
+    .cat-engaged {
+      font-size: 11px;
+      font-weight: 600;
+      color: #065f46;
+      background: #d1fae5;
+      padding: 2px 7px;
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+
+    /* ── Sort / filter controls ── */
+    .cat-controls {
+      display: flex;
+      gap: 6px;
+      padding: 0 12px 10px;
+    }
+
+    .cat-controls select {
+      flex: 1;
+      padding: 5px 6px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #374151;
+      background: white;
+      cursor: pointer;
+    }
+
+    /* ── Account score indicator ── */
+    .account-score {
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+      min-width: 72px;
+      text-align: right;
+    }
+
+    .score-none { color: #9ca3af; font-weight: 400; font-size: 11px; }
+    .score-low  { color: #ef4444; }
+    .score-med  { color: #f59e0b; }
+    .score-high { color: #10b981; }
+
+    /* ── Like count ── */
+    .account-likes {
+      font-size: 11px;
+      color: #9ca3af;
+      flex-shrink: 0;
+      min-width: 36px;
+      text-align: right;
+    }
+
+    /* ── Per-account stale warning ── */
+    .account-stale {
+      font-size: 11px;
+      font-weight: 600;
+      color: #b45309;
+      flex-shrink: 0;
+    }
+
     /* ── Empty / loading states ── */
     .empty-state {
       text-align: center;
@@ -461,6 +521,19 @@
     <div class="cat-header">
       <span class="cat-title">Feed Categories</span>
       <span class="cat-total" id="catTotal"></span>
+    </div>
+
+    <div class="cat-controls">
+      <select id="catSort">
+        <option value="lastSeen">Sort: Last seen</option>
+        <option value="engagementScore">Sort: Engagement</option>
+        <option value="likeCount">Sort: Likes</option>
+      </select>
+      <select id="catFilter">
+        <option value="all">All accounts</option>
+        <option value="staleOnly">Stale only</option>
+        <option value="hideStale">Hide stale</option>
+      </select>
     </div>
 
     <div id="categoryList">

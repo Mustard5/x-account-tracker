@@ -505,25 +505,150 @@ async function gatherAccountSamples(usernames) {
 
 // Write categorization results to accountProfiles store
 async function saveAccountProfiles(samples, categories) {
+  // Read existing profiles first so we can preserve interaction counts and scores
+  const existingProfiles = {};
+  for (const sample of samples) {
+    try {
+      const existing = await new Promise((resolve) => {
+        const tx = db.transaction(['accountProfiles'], 'readonly');
+        const req = tx.objectStore('accountProfiles').get(sample.username);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+      existingProfiles[sample.username] = existing;
+    } catch {
+      existingProfiles[sample.username] = null;
+    }
+  }
+
   const tx = db.transaction(['accountProfiles'], 'readwrite');
   const store = tx.objectStore('accountProfiles');
   const now = new Date().toISOString();
   for (const sample of samples) {
     const raw = categories[sample.username];
     const category = VALID_CATEGORIES.includes(raw) ? raw : 'Other';
+    const existing = existingProfiles[sample.username];
     store.put({
       username: sample.username,
       category,
       avgDwell: sample.avgDwell,
       signalCount: sample.signalCount,
       lastSeen: now,
-      categorizedAt: now
+      categorizedAt: now,
+      // Preserve existing interaction counts and computed scores
+      likeCount: existing?.likeCount || 0,
+      retweetCount: existing?.retweetCount || 0,
+      engagementScore: existing?.engagementScore ?? null,
+      isStale: existing?.isStale || false,
+      staleReason: existing?.staleReason || null,
     });
   }
   await new Promise((resolve, reject) => {
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
   });
+}
+
+// Increment like or retweet count on an accountProfiles record
+async function incrementProfileInteraction(username, interactionType) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['accountProfiles'], 'readwrite');
+    const store = tx.objectStore('accountProfiles');
+    const req = store.get(username);
+    req.onsuccess = () => {
+      const profile = req.result;
+      if (!profile) { resolve(false); return; } // no profile yet — will be set on next categorization
+      if (interactionType === 'like') {
+        profile.likeCount = (profile.likeCount || 0) + 1;
+      } else if (interactionType === 'retweet') {
+        profile.retweetCount = (profile.retweetCount || 0) + 1;
+      }
+      store.put(profile);
+    };
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Compute combined engagement score for a single username
+async function computeEngagementScore(username) {
+  try {
+    const [observations, interactions] = await Promise.all([
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(['feedObservations'], 'readonly');
+        const req = tx.objectStore('feedObservations').index('username').getAll(username);
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      }),
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(['interactions'], 'readonly');
+        const req = tx.objectStore('interactions').index('username').getAll(username);
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      }),
+    ]);
+
+    const obsCount = observations.length;
+    const likeCount  = interactions.filter(i => i.type === 'like').length;
+    const rtCount    = interactions.filter(i => i.type === 'retweet').length;
+    const interactionSum = likeCount * 2 + rtCount * 3;
+
+    // Interaction-only (no feed observations): unambiguous high engagement
+    if (obsCount === 0) {
+      return interactionSum > 0 ? 1.5 : null;
+    }
+
+    // Not enough data yet
+    if (obsCount < 3) return null;
+
+    let dwellSum = 0;
+    for (const obs of observations) {
+      if (obs.dwellTime < 2000) dwellSum -= 1;
+      else if (obs.dwellTime > 8000) dwellSum += 1;
+      // 2–8s = 0
+    }
+    return parseFloat(((dwellSum + interactionSum) / obsCount).toFixed(2));
+  } catch (error) {
+    console.error(`[XAT Score] computeEngagementScore failed for @${username}:`, error);
+    return null;
+  }
+}
+
+// Write engagementScore + staleness fields back to an accountProfiles record
+async function updateEngagementScore(username) {
+  try {
+    const score = await computeEngagementScore(username);
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(['accountProfiles'], 'readwrite');
+      const store = tx.objectStore('accountProfiles');
+      const req = store.get(username);
+      req.onsuccess = () => {
+        const profile = req.result;
+        if (!profile) { resolve(false); return; }
+        profile.engagementScore = score;
+        const daysSinceLastSeen = (Date.now() - new Date(profile.lastSeen).getTime()) / 86400000;
+        const lowEngagement = score !== null && score < -0.5 && (profile.signalCount || 0) >= 10;
+        const notSeen = daysSinceLastSeen > 30;
+        profile.isStale = lowEngagement || notSeen;
+        profile.staleReason = notSeen ? 'not_seen' : (lowEngagement ? 'low_engagement' : null);
+        store.put(profile);
+      };
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+    console.log(`[XAT Score] @${username} → ${score}`);
+  } catch (error) {
+    console.error(`[XAT Score] updateEngagementScore failed for @${username}:`, error);
+  }
+}
+
+// Schedule a score recomputation during browser idle time
+function scheduleScoreRecomputation(username) {
+  if (typeof requestIdleCallback !== 'undefined') {
+    requestIdleCallback(() => updateEngagementScore(username), { timeout: 30000 });
+  } else {
+    setTimeout(() => updateEngagementScore(username), 5000);
+  }
 }
 
 // Send a batch of accounts to Ollama for topic categorization
@@ -589,6 +714,11 @@ async function categorizeAccountBatch() {
   await saveAccountProfiles(samples, categories);
   const summary = Object.entries(categories).map(([u, c]) => `@${u}→${c}`).join(', ');
   console.log(`[XAT Cat] Done: ${summary}`);
+
+  // Schedule engagement score recomputation for each newly categorized account
+  for (const sample of samples) {
+    scheduleScoreRecomputation(sample.username);
+  }
 }
 
 // Schedule categorization during browser idle time if enough accounts are pending
@@ -661,6 +791,11 @@ function observeInteractions() {
             const interactionType = target.getAttribute('data-testid');
             try {
               await recordInteraction(username, interactionType);
+              // Only positive signals increment profile counts
+              if (interactionType === 'like' || interactionType === 'retweet') {
+                await incrementProfileInteraction(username, interactionType);
+                scheduleScoreRecomputation(username);
+              }
             } catch (error) {
               console.error(`Failed to record interaction for @${username}:`, error);
               // Continue silently - don't disrupt user's interaction with X
