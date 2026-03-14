@@ -505,44 +505,35 @@ async function gatherAccountSamples(usernames) {
 
 // Write categorization results to accountProfiles store
 async function saveAccountProfiles(samples, categories) {
-  // Read existing profiles first so we can preserve interaction counts and scores
-  const existingProfiles = {};
-  for (const sample of samples) {
-    try {
-      const existing = await new Promise((resolve) => {
-        const tx = db.transaction(['accountProfiles'], 'readonly');
-        const req = tx.objectStore('accountProfiles').get(sample.username);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => resolve(null);
-      });
-      existingProfiles[sample.username] = existing;
-    } catch {
-      existingProfiles[sample.username] = null;
-    }
-  }
-
   const tx = db.transaction(['accountProfiles'], 'readwrite');
   const store = tx.objectStore('accountProfiles');
   const now = new Date().toISOString();
+
   for (const sample of samples) {
     const raw = categories[sample.username];
     const category = VALID_CATEGORIES.includes(raw) ? raw : 'Other';
-    const existing = existingProfiles[sample.username];
-    store.put({
-      username: sample.username,
-      category,
-      avgDwell: sample.avgDwell,
-      signalCount: sample.signalCount,
-      lastSeen: now,
-      categorizedAt: now,
-      // Preserve existing interaction counts and computed scores
-      likeCount: existing?.likeCount || 0,
-      retweetCount: existing?.retweetCount || 0,
-      engagementScore: existing?.engagementScore ?? null,
-      isStale: existing?.isStale || false,
-      staleReason: existing?.staleReason || null,
-    });
+
+    // Read-then-write inside the SAME transaction to avoid race conditions
+    const req = store.get(sample.username);
+    req.onsuccess = () => {
+      const existing = req.result;
+      store.put({
+        username: sample.username,
+        category,
+        avgDwell: sample.avgDwell,
+        signalCount: sample.signalCount,
+        lastSeen: now,
+        categorizedAt: now,
+        // Preserve existing interaction counts and computed scores
+        likeCount: existing?.likeCount || 0,
+        retweetCount: existing?.retweetCount || 0,
+        engagementScore: existing?.engagementScore ?? null,
+        isStale: existing?.isStale || false,
+        staleReason: existing?.staleReason || null,
+      });
+    };
   }
+
   await new Promise((resolve, reject) => {
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
@@ -571,17 +562,19 @@ async function incrementProfileInteraction(username, interactionType) {
 }
 
 // Compute combined engagement score for a single username
+// Returns { score, obsCount } or null
 async function computeEngagementScore(username) {
   try {
+    // Single transaction across both stores for a consistent snapshot
+    const tx = db.transaction(['feedObservations', 'interactions'], 'readonly');
+
     const [observations, interactions] = await Promise.all([
       new Promise((resolve, reject) => {
-        const tx = db.transaction(['feedObservations'], 'readonly');
         const req = tx.objectStore('feedObservations').index('username').getAll(username);
         req.onsuccess = () => resolve(req.result || []);
         req.onerror = () => reject(req.error);
       }),
       new Promise((resolve, reject) => {
-        const tx = db.transaction(['interactions'], 'readonly');
         const req = tx.objectStore('interactions').index('username').getAll(username);
         req.onsuccess = () => resolve(req.result || []);
         req.onerror = () => reject(req.error);
@@ -595,7 +588,7 @@ async function computeEngagementScore(username) {
 
     // Interaction-only (no feed observations): unambiguous high engagement
     if (obsCount === 0) {
-      return interactionSum > 0 ? 1.5 : null;
+      return interactionSum > 0 ? { score: 1.5, obsCount: 0 } : null;
     }
 
     // Not enough data yet
@@ -605,9 +598,9 @@ async function computeEngagementScore(username) {
     for (const obs of observations) {
       if (obs.dwellTime < 2000) dwellSum -= 1;
       else if (obs.dwellTime > 8000) dwellSum += 1;
-      // 2–8s = 0
     }
-    return parseFloat(((dwellSum + interactionSum) / obsCount).toFixed(2));
+    const score = parseFloat(((dwellSum + interactionSum) / obsCount).toFixed(2));
+    return { score, obsCount };
   } catch (error) {
     console.error(`[XAT Score] computeEngagementScore failed for @${username}:`, error);
     return null;
@@ -617,7 +610,10 @@ async function computeEngagementScore(username) {
 // Write engagementScore + staleness fields back to an accountProfiles record
 async function updateEngagementScore(username) {
   try {
-    const score = await computeEngagementScore(username);
+    const result = await computeEngagementScore(username);
+    const score = result ? result.score : null;
+    const liveObsCount = result ? result.obsCount : 0;
+
     await new Promise((resolve, reject) => {
       const tx = db.transaction(['accountProfiles'], 'readwrite');
       const store = tx.objectStore('accountProfiles');
@@ -626,8 +622,12 @@ async function updateEngagementScore(username) {
         const profile = req.result;
         if (!profile) { resolve(false); return; }
         profile.engagementScore = score;
+        // Update signalCount to live observation count so staleness uses current data
+        if (liveObsCount > 0) {
+          profile.signalCount = liveObsCount;
+        }
         const daysSinceLastSeen = (Date.now() - new Date(profile.lastSeen).getTime()) / 86400000;
-        const lowEngagement = score !== null && score < -0.5 && (profile.signalCount || 0) >= 10;
+        const lowEngagement = score !== null && score < -0.5 && liveObsCount >= 10;
         const notSeen = daysSinceLastSeen > 30;
         profile.isStale = lowEngagement || notSeen;
         profile.staleReason = notSeen ? 'not_seen' : (lowEngagement ? 'low_engagement' : null);

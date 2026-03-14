@@ -85,6 +85,7 @@ function categoryAvgScore(accounts) {
 
 let currentSort   = 'lastSeen';  // 'lastSeen' | 'engagementScore' | 'likeCount'
 let currentFilter = 'all';       // 'all' | 'staleOnly' | 'hideStale'
+let cachedProfiles = null;
 
 // ── Categories tab ─────────────────────────────────────────────────────────
 
@@ -146,9 +147,11 @@ function loadCategories() {
       if (profiles.length === 0) {
         document.getElementById('catTotal').textContent = '0 accounts observed';
         listEl.innerHTML = '<div class="empty-state">No data yet.<br>Browse X normally — categories appear after the first Ollama batch runs (every 20 posts scrolled).</div>';
+        cachedProfiles = null;
         return;
       }
 
+      cachedProfiles = profiles;
       renderProfiles(profiles);
     });
   });
@@ -508,10 +511,18 @@ loadCategories();
 
 document.getElementById('catSort')?.addEventListener('change', e => {
   currentSort = e.target.value;
-  loadCategories();
+  if (cachedProfiles) {
+    renderProfiles(cachedProfiles);
+  } else {
+    loadCategories();
+  }
 });
 
 document.getElementById('catFilter')?.addEventListener('change', e => {
   currentFilter = e.target.value;
-  loadCategories();
+  if (cachedProfiles) {
+    renderProfiles(cachedProfiles);
+  } else {
+    loadCategories();
+  }
 });
